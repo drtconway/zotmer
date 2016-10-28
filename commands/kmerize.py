@@ -1,4 +1,5 @@
 from base import Cmd
+from merge import merge1, merge2
 
 from pykmer.basics import kmers
 from pykmer.file import readFasta, readFastq
@@ -6,6 +7,7 @@ import pykmer.kset as kset
 import pykmer.kfset as kfset
 
 import gzip
+import os
 import sys
 
 def openFile(fn):
@@ -39,47 +41,110 @@ def mkParser(fn):
         for grp in readFastq(openFile(fn)):
             yield (grp[0], grp[1])
 
+def mkPairs(xs):
+    p = 0
+    n = 0
+    for x in xs:
+        if x != p:
+            if n > 0:
+                yield (p, n)
+            p = x
+            n = 0
+        n += 1
+    if n > 0:
+        yield (p, n)
+
+def mkSet(xs):
+    p = 0
+    n = 0
+    for x in xs:
+        if x != p:
+            if n > 0:
+                yield p
+            p = x
+            n = 0
+        n += 1
+    if n > 0:
+        yield p
+
 class Kmerize(Cmd):
     def run(self, opts):
         K = int(opts['<k>'])
         out = opts['<out>']
         s = opts['-s']
-        Z = 1024*1024*256
+        Z = 1024*1024*8
         if opts['-m'] is not None:
             Z = 1024*1024*int(opts['-m'])
-        buf = {}
+        buf = []
+        tmps = []
         acgt = [0, 0, 0, 0]
         m = 0
         for fn in opts['<input>']:
             for (nm, seq) in mkParser(fn):
                 for x in kmers(K, seq, True):
-                    c = buf.get(x, 0)
-                    buf[x] = c + 1
+                    buf.append(x)
                     acgt[x&3] += 1
                     m += 1
+                if len(buf) >= Z:
+                    print >> sys.stderr, "flush"
+                    buf.sort()
+                    fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
+                    tmps.append(fn)
+                    if s:
+                        kset.write(K, mkSet(buf), fn)
+                    else:
+                        kfset.write(K, mkPairs(buf), fn)
+                    buf = []
+
+        if len(tmps):
+            if len(buf):
+                buf.sort()
+                fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
+                tmps.append(fn)
+                if s:
+                    kset.write(K, mkSet(buf), fn)
+                else:
+                    kfset.write(K, mkPairs(buf), fn)
+                buf = []
+
+            zs = None
+            if s:
+                for fn in range(len(tmps)):
+                    (_, xs) = kset.read(fn)
+                    if zs is None:
+                        zs = xs
+                    else:
+                        zs = merge1(K, zs, xs)
+            else:
+                for fn in range(len(tmps)):
+                    (_, xs) = kfset.read(fn)
+                    if zs is None:
+                        zs = xs
+                    else:
+                        zs = merge2(K, zs, xs)
+        else:
+            buf.sort()
+            if s:
+                zs = mkSet(buf)
+            else:
+                zs = mkPairs(buf)
 
         n = float(sum(acgt))
         acgt = tuple([c/n for c in acgt])
-        h = {}
-        for (_, c) in buf.iteritems():
-            n = h.get(c, 0)
-            h[c] = n + 1
 
         meta = {
             'total' : m,
             'distinct' : len(buf),
-            'acgt' : acgt,
-            'hist' : h
+            'acgt' : acgt
         }
 
         if s:
-            buf = buf.keys()
-            buf.sort()
-            kset.write(K, buf, out, meta)
+            kset.write(K, zs, out, meta)
         else:
-            buf = buf.items()
-            buf.sort()
-            kfset.write(K, buf, out, meta)
+            kfset.write(K, zs, out, meta)
+
+        for fn in tmps:
+            os.remove(fn)
 
 def add(cmds):
     cmds['kmerize'] = Kmerize()
