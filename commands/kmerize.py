@@ -72,10 +72,11 @@ class Kmerize(Cmd):
         K = int(opts['<k>'])
         out = opts['<out>']
         s = opts['-s']
-        Z = 1024*1024*8
+        Z = 1024*1024*32
         if opts['-m'] is not None:
             Z = 1024*1024*int(opts['-m'])
         buf = []
+        n = 0
         tmps = []
         acgt = [0, 0, 0, 0]
         m = 0
@@ -85,8 +86,8 @@ class Kmerize(Cmd):
                     buf.append(x)
                     acgt[x&3] += 1
                     m += 1
-                if len(buf) >= Z:
-                    print >> sys.stderr, "flush"
+                    n += 1
+                if n >= Z:
                     buf.sort()
                     fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
                     tmps.append(fn)
@@ -95,6 +96,7 @@ class Kmerize(Cmd):
                     else:
                         kfset.write(K, mkPairs(buf), fn)
                     buf = []
+                    n = 0
 
         if len(tmps):
             if len(buf):
