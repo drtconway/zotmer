@@ -25,7 +25,7 @@ from docopt import docopt
 import commands
 
 if __name__ == '__main__':
-    arguments = docopt(__doc__, version='Naval Fate 2.0')
+    arguments = docopt(__doc__, version='Almost k-mer toolkit 0.1')
     for (k,v) in arguments.items():
         if k in commands.cmds and v:
             commands.cmds[k].run(arguments)
