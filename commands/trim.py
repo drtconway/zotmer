@@ -12,20 +12,19 @@ def gauss(x0, x, n):
     return math.exp(-sqr(x0 - x)/(2.0*n*n))
 
 def smooth(h):
-    m = max(h.keys()) + 1
-    lm = math.log(m)
-    h1 = [0 for j in range(m)]
-    for x0 in range(1, m):
+    h1 = {}
+    for x0 in h.keys():
         num = 0
         den = 0
         for (xi,yi) in h.items():
-            z = gauss(x0, xi, lm)
+            z = gauss(x0, xi, 1.5)
             #print x0, xi, z, ly
             num += z*yi
             den += z
         y0 = num/den
-        print x0, h.get(x0, 0), y0
+        #print x0, h.get(x0, 0), y0
         h1[x0] = y0
+    return h1
 
 def infer(fn):
     (m, xs) = kfset.read(fn)
@@ -35,9 +34,16 @@ def infer(fn):
         c = h.get(f, 0)
         h[f] = c+1
 
-    M = max(h.keys())
     h1 = smooth(h)
-    return 1
+    h1 = h1.items()
+    h1.sort()
+    v = h1[0]
+    for v1 in h1[1:]:
+        if v1[1] < v[1]:
+            v = v1
+        else:
+            break
+    return v[0]
 
 def trim(xs, c):
     for (x,f) in xs:
@@ -51,6 +57,7 @@ class Trim(Cmd):
         c = int(opts['<cutoff>'])
         if c == 0:
             c = infer(inp)
+            print 'inferred cutoff:', c
         (m, xs) = kfset.read(inp)
         K = m['K']
         kfset.write(K, trim(xs, c), out, m)
