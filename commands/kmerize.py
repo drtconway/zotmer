@@ -111,14 +111,14 @@ class Kmerize(Cmd):
 
             zs = None
             if s:
-                for fn in range(len(tmps)):
+                for fn in tmps:
                     (_, xs) = kset.read(fn)
                     if zs is None:
                         zs = xs
                     else:
                         zs = merge1(K, zs, xs)
             else:
-                for fn in range(len(tmps)):
+                for fn in tmps:
                     (_, xs) = kfset.read(fn)
                     if zs is None:
                         zs = xs
