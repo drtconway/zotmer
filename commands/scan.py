@@ -1,25 +1,17 @@
 from base import Cmd
 
-from pykmer.basics import fasta, kmersWithPos, lcp, rc, render
+from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
 from pykmer.file import readFasta
 import pykmer.kset as kset
 import pykmer.kfset as kfset
-from pykmer.stats import logChi2Crit, logChi2CDF, counts2cdf, ksDistance2, logLowerGamma, logGamma
+from pykmer.stats import counts2cdf, ksDistance2, log1mexp
 from pykmer.uf import uf
+from pykmer.sparse import sparse
 from pykmer.exceptions import MismatchedK
 
+import array
 import math
 import sys
-
-def getK(ins):
-    k = None
-    for fn in ins:
-        k0 = kset.probeK(fn)
-        if k is None:
-            k = k0
-        elif k != k0:
-            raise MismatchedK(k, k0)
-    return k
 
 def findLcp(idx, x):
     l = 0
@@ -52,34 +44,13 @@ def resolveLcp(k, idx, lcps, x):
         else:
             break
 
-def rank1(xs, x):
-    l = 0
-    h = len(xs)
-    while h > l:
-        m = (h + l) // 2
-        y = xs[m]
-        if y == x:
-            return m + 1
-        if y < x:
-            l = m + 1
-        else:
-            h = m - 1
-    return l
-
-def rank2(xs, x0, x1):
-    assert x0 < x1
-    r0 = rank1(xs, x0)
-    r1 = r0
-    while r1 < len(xs) and xs[r1] < x1:
-        r1 += 1
-    return (r0, r1)
-
 def succ(K, xs, x):
     m = (1 << (2*K)) - 1
     y0 = (x << 2) & m
     y1 = y0 + 4
-    r = rank2(xs, y0, y1)
-    return [xs[i] for i in range(r[0], r[1])]
+    r0 = xs.rank(y0)
+    r1 = xs.rank(y1)
+    return [xs.select(i) for i in xrange(r0, r1)]
 
 def los(K, x, y):
     m = (1 << (2*K)) - 1
@@ -155,7 +126,7 @@ def logNull(g, s, j):
 class Scan(Cmd):
     def run(self, opts):
         gfn = opts['<genes>']
-        K = getK(opts['<input>'])
+        K = kfset.read(opts['<input>'][0])[0]['K']
         idx = []
         lens = []
         nms = []
@@ -179,129 +150,163 @@ class Scan(Cmd):
         for fn in opts['<input>']:
             m = 0
             lcps = [(0, 0) for i in range(len(idx))]
-            (meta, xs) = kset.read(fn)
-            sat = meta['acgt'][0] + meta['acgt'][3]
+            (meta, xs) = kfset.read(fn)
+            sacgt = [0, 0, 0, 0]
             px = 0
             pxn = 0
-            for x in xs:
+            X = array.array('L', [])
+            for (x,_) in xs:
                 xp = (x >> s)
                 if px != xp:
                     print >> sys.stderr, '%s\t%d' % (render(J, px), pxn)
                     px = xp
                     pxn = 0
+                sacgt[x&3] += 1
                 pxn += 1
                 resolveLcp(K, idx, lcps, x)
+                X.append(x)
                 m += 1
+            X = sparse(1 << (2*K), X)
 
+            sat = float(sacgt[1]+sacgt[2])/float(sacgt[0]+sacgt[1]+sacgt[2]+sacgt[3])
             g = qat * sat - 0.5 * (qat + sat) + 0.5
-            gs = sat * sat - 0.5 * (sat + sat) + 0.5
-            print >> sys.stderr, "qat =", qat
-            print >> sys.stderr, "sat =", sat
             print >> sys.stderr, "g =", g
-            print >> sys.stderr, "gs =", gs
             nm = [null(g, m, j) for j in range(0, K+1)]
 
-            cnt = [[0 for j in range(K+1)] for i in range(len(nms))]
-            alleles = [[] for i in range(len(nms))]
+            cnt = [[0 for j in xrange(K+1)] for i in xrange(len(nms))]
+            alleles = [[] for i in xrange(len(nms))]
             for i in range(len(idx)):
-                cnt[idx[i][1]][lcps[i][0]] += 1
-                p = 1 - null(g, m, lcps[i][0])
-                alleles[idx[i][1]].append((idx[i][2], p, lcps[i][0], lcps[i][1]))
+                (x, n, p) = idx[i]
+                (l, y) = lcps[i]
+                cnt[n][l] += 1
+                alleles[n].append((p, x, y, l))
 
-            for i in range(len(nms)):
-                dst = counts2cdf(cnt[i])
-                (ks1, ks2) = ksDistance2(nm, dst)
-                kspv = -2*(ks1**2)*lens[i] / math.log(10)
-                alleles[i].sort()
-
-                js = [None for j in range(lens[i] - K + 1)]
-                xs = [None for j in range(lens[i] - K + 1)]
-                qs = [None for j in range(lens[i])]
-                ax = [[1, 1, 1, 1] for j in range(lens[i])]
-                dx = [0 for j in range(lens[i])]
-                for (p, v, k, x) in alleles[i]:
+            for i in xrange(len(nms)):
+                qc = math.log(0.05/(lens[i] - K + 1)/2)
+                a = [[0, 0, 0] for j in xrange(lens[i] - K + 1)]
+                for (p, x, y, l) in alleles[i]:
                     if p < 0:
+                        q = -(p + 1)
                         x = rc(K, x)
-                        p = -p
-                    p -= 1 # positions from 1-offset -> 0-offset
-                    if js[p] < k:
-                        js[p] = k
-                        xs[p] = x
-                    for l in range(K):
-                        j = p + l
-                        qs[j] = max(qs[j], k)
-                        dx[j] += 1
-                        k = K - l - 1
-                        b = (x >> (2*k)) & 3
-                        ax[j][b] *= v
-
-                pcrit = 0.01 / (len(xs) - 1)
-                ocrit = 0
-                for j in range(K, 1, -1):
-                    if 1 - null(gs, m, j) > pcrit:
-                        break
-                    ocrit = j
-
-                suf = indexSuffixes(K, xs)
-                u = uf()
-                for j in range(len(xs) - 1):
-                    (o, k) = maxOverlap(K, xs[j], j, suf)
-                    if o >= ocrit:
-                        u.union(j, k)
-
-                idx = {}
-                for j in range(len(xs)):
-                    j0 = u.find(j)
-                    if j0 not in idx:
-                        idx[j0] = []
-                    idx[j0].append(j)
-
-                for (_, ls) in idx.items():
-                    a = [0 for j in range(lens[i])]
-                    q = []
-                    for j in ls:
-                        x = xs[j]
-                        q0 = null(g, m, js[j])
-                        q.append(q0)
-                        for l in range(K):
-                            k = (K - l - 1)
-                            b = (x >> (2*k)) & 3
-                            a[j+l] |= 1 << b
-
-                    hasZeros = False
-                    for j in range(len(a)):
-                        if a[j] == 0:
-                            hasZeros = True
-                        a[j] = fasta(a[j])
-
-                    if hasZeros:
-                        continue
+                        y = rc(K, y)
                     else:
-                        chi2 = -2*sum([math.log(q0) for q0 in q])
-                        print '%s\t%d\t%g\t%s' % (nms[i], lens[i], chi2, ''.join(a))
-
-                #a = []
-                #for j in range(len(ax)):
-                #    b = 0
-                #    for k in range(4):
-                #        if ax[j][k] < 1e-12:
-                #            b |= 1 << k
-                #    a.append(fasta(b))
-                #    #print j, dx[j], fasta(b), ax[j]
-#
-#                chi2 = 0
-#                for j in qs:
-#                    q0 = null(g, m, j)
-#                    chi2 += math.log(q0 + 1e-100)
-#                for j in range(len(xs) - 1):
-#                    (k, _) = overlap(K, xs, j)
-#                    q0 = null(gs, K - k, k)
-#                    chi2 += math.log(q0 + 1e-100)
-#
-#                chi2 *= -2
-#                pv = logChi2LowerPval(2*(len(qs) + len(xs) - 1), chi2)/math.log(10)
-#
-#                print '%d\t%d\t%d\t%g\t%g\t%g\t%g\t%s\t%s' % (i, lens[i], m, ks1, kspv, chi2, pv, nms[i], ''.join(a))
+                        q = p - 1
+                    if l > a[q][2]:
+                        a[q] = [x, y, l]
+                m = (1 << (2*K - 2)) - 1
+                py = 0
+                u = uf()
+                for j in xrange(lens[i] - K + 1):
+                    x = a[j][1]
+                    y = x >> 2
+                    if j > 0:
+                        d = ham(py, y)
+                        if d == 0:
+                            u.union(j-1, j)
+                    py = x & m
+                udx = {}
+                for j in xrange(lens[i] - K + 1):
+                    v = u.find(j)
+                    if v not in udx:
+                        udx[v] = []
+                    udx[v].append(j)
+                fragments = {}
+                fdxLhs = {}
+                fdxRhs = {}
+                kx = []
+                for (jx, js) in udx.iteritems():
+                    q = 0
+                    for j in js:
+                        q += math.log1p(-nm[a[j][2]])
+                    if q > math.log(0.05/len(js)):
+                        continue
+                    print i, jx, len(js), q
+                    fragments[jx] = (js[0], a[js[0]][1], js[-1] + 1, a[js[-1]][1])
+                    kx.append((len(js), jx))
+                    fdxLhs[a[js[0]][1]] = jx
+                    fdxRhs[a[js[-1]][1]] = jx
+                kx.sort()
+                links = {}
+                for (_, jx) in kx[::-1]:
+                    (jL, xL, jR, xR) = fragments[jx]
+                    if jR == lens[i] - K + 1:
+                        continue
+                    x = xR
+                    xs = []
+                    lnk = None
+                    for k in xrange(100):
+                        ys = succ(K, X, x)
+                        if len(ys) != 1:
+                            break
+                        x = ys[0]
+                        if x in fdxLhs:
+                            lnk = fdxLhs[x]
+                            break
+                        xs.append(x)
+                    if lnk is not None:
+                        links[jx] = xs
+                        u.union(jx, lnk)
+                udx = {}
+                for j in [jx for (_, jx) in kx]:
+                    v = u.find(j)
+                    if v not in udx:
+                        udx[v] = []
+                    udx[v].append(j)
+                res = []
+                for (jxx, jxs) in udx.iteritems():
+                    fs = [(fragments[jx], jx) for jx in jxs]
+                    fs.sort()
+                    sxs = []
+                    for fj in xrange(len(fs)):
+                        (f, jx) = fs[fj]
+                        beg = f[0]
+                        end = f[2]
+                        if fj == 0:
+                            for j in xrange(beg):
+                                sxs.append((0, 0))
+                        xs = links.get(jx, None)
+                        for j in xrange(beg, end):
+                            x = a[j][1]
+                            l = a[j][2]
+                            sxs.append((x, l))
+                        if xs:
+                            for x in xs:
+                                sxs.append((x, 27))
+                        else:
+                            if fj < len(fs) - 1:
+                                ff = fs[fj+1][0]
+                                nxt = ff[0]
+                            else:
+                                nxt = lens[i] - K + 1
+                            for j in xrange(end, nxt):
+                                sxs.append((0, 0))
+                    seq = [[0, 0, 0, 0] for j in xrange(len(sxs) + K - 1)]
+                    for j in xrange(len(sxs)):
+                        (x, l) = sxs[j]
+                        p = math.log1p(-nm[l])
+                        for k in xrange(K):
+                            seq[j + K - k - 1][x&3] += p
+                            x >>= 2
+                    ax = []
+                    p = 0
+                    for j in xrange(len(seq)):
+                        b = 0
+                        for k in xrange(4):
+                            if seq[j][k] < qc:
+                                b |= 1 << k
+                        ax.append(fasta(b))
+                        p += log1mexp(min(-1e-100, sum(seq[j])))
+                    dst = counts2cdf(cnt[i])
+                    (_, kd) = ksDistance2(dst, nm)
+                    q = log1mexp(p)
+                    res.append((q, kd, ''.join(ax)))
+                res.sort()
+                for j in xrange(len(res)):
+                    if j > 0 and res[j][0] > qc:
+                        break
+                    print '%d\t%d\t%d\t%g\t%g\t%s\t%s' % (i, lens[i], len(res[j][2]), res[j][1], res[j][0], nms[i], res[j][2])
+                    if res[j][0] > qc:
+                        break
                 sys.stdout.flush()
 
 def add(cmds):

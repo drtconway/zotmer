@@ -6,9 +6,48 @@ from pykmer.file import readFasta, readFastq
 import pykmer.kset as kset
 import pykmer.kfset as kfset
 
+import array
 import gzip
 import os
 import sys
+
+class KmerAccumulator:
+    def __init__(self):
+        self.toc = {}
+        self.z = 0
+
+    def __len__(self):
+        return self.z
+
+    def clear(self):
+        self.toc = {}
+        self.z = 0
+
+    def add(self, x):
+        xh = x >> 32
+        xl = x & 0xFFFFFFFF
+        if xh not in self.toc:
+            self.toc[xh] = array.array('I')
+        self.toc[xh].append(xl)
+        self.z += 1
+
+    def kmers(self):
+        xhs = self.toc.keys()
+        xhs.sort()
+        h = {}
+        for xh in xhs:
+            x0 = xh << 32
+            xls = self.toc[xh].tolist()
+            xls.sort()
+            for xl in xls:
+                x = x0 | xl
+                yield x
+            n = len(xls)
+            h[n] = 1 + h.get(n, 0)
+        h = h.items()
+        h.sort()
+        for (n,f) in h:
+            print >> sys.stderr, '%d\t%d' % (n, f)
 
 def openFile(fn):
     if fn == "-":
@@ -75,7 +114,7 @@ class Kmerize(Cmd):
         Z = 1024*1024*32
         if opts['-m'] is not None:
             Z = 1024*1024*int(opts['-m'])
-        buf = []
+        buf = KmerAccumulator()
         n = 0
         tmps = []
         acgt = [0, 0, 0, 0]
@@ -83,30 +122,28 @@ class Kmerize(Cmd):
         for fn in opts['<input>']:
             for (nm, seq) in mkParser(fn):
                 for x in kmers(K, seq, True):
-                    buf.append(x)
+                    buf.add(x)
                     acgt[x&3] += 1
                     m += 1
                     n += 1
                 if n >= Z:
-                    buf.sort()
                     fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
                     tmps.append(fn)
                     if s:
-                        kset.write(K, mkSet(buf), fn)
+                        kset.write(K, mkSet(buf.kmers()), fn)
                     else:
-                        kfset.write(K, mkPairs(buf), fn)
-                    buf = []
+                        kfset.write(K, mkPairs(buf.kmers()), fn)
+                    buf.clear()
                     n = 0
 
         if len(tmps):
             if len(buf):
-                buf.sort()
                 fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
                 tmps.append(fn)
                 if s:
-                    kset.write(K, mkSet(buf), fn)
+                    kset.write(K, mkSet(buf.kmers()), fn)
                 else:
-                    kfset.write(K, mkPairs(buf), fn)
+                    kfset.write(K, mkPairs(buf.kmers()), fn)
                 buf = []
 
             zs = None
@@ -125,11 +162,10 @@ class Kmerize(Cmd):
                     else:
                         zs = merge2(K, zs, xs)
         else:
-            buf.sort()
             if s:
-                zs = mkSet(buf)
+                zs = mkSet(buf.kmers())
             else:
-                zs = mkPairs(buf)
+                zs = mkPairs(buf.kmers())
 
         n = float(sum(acgt))
         acgt = tuple([c/n for c in acgt])
