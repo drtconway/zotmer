@@ -60,12 +60,40 @@ def resolveLcp(K, S, L, Y, x):
         else:
             break
 
+def resolveAll(K, S, L, Y, xs):
+    i = 0
+    Z = S.count()
+    for x in xs:
+        while i < Z and S.select(i) <= x:
+            y = S.select(i)
+            l = lcp(K, x, y)
+            if l > L[i]:
+                L[i] = l
+                Y[i] = x
+            i += 1
+    while i < Z:
+        y = S.select(i)
+        l = lcp(K, x, y)
+        if l > L[i]:
+            L[i] = l
+            Y[i] = x
+        i += 1
+
+    for i in xrange(1, Z):
+        x = Y[i-1]
+        y = S.select(i)
+        l = lcp(K, x, y)
+        if l > L[i]:
+            L[i] = l
+            Y[i] = x
+
 def succ(K, xs, x):
     m = (1 << (2*K)) - 1
     y0 = (x << 2) & m
     y1 = y0 + 4
-    r0 = xs.rank(y0)
-    r1 = xs.rank(y1)
+    #r0 = xs.rank(y0)
+    #r1 = xs.rank(y1)
+    (r0, r1) = xs.rank2(y0, y1)
     return [xs.select(i) for i in xrange(r0, r1)]
 
 def null(g, s, j):
@@ -192,8 +220,9 @@ class Scan(Cmd):
             for (x,_) in xs:
                 X.append(x)
                 sacgt[x&3] += 1
-                resolveLcp(K, S, L, Y, x)
+                #resolveLcp(K, S, L, Y, x)
                 M += 1
+            resolveAll(K, S, L, Y, X)
             sacgt = [float(c)/float(M) for c in sacgt]
             X = sparse(2*K, X)
 
@@ -335,6 +364,10 @@ class Scan(Cmd):
                     (_, kd) = ksDistance2(dst, nm)
                     q = log1mexp(p)
                     res.append((q, kd, ''.join(ax)))
+
+                if len(res) == 0:
+                    continue
+
                 res.sort()
                 if res[0][0] < qc:
                     #ed = lev(seqs[i], res[0][2])
