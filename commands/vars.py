@@ -1,10 +1,11 @@
 from base import Cmd
 
-from pykmer.basics import kmersWithPos, lcp, render
+from pykmer.basics import can, fasta, lcp, render
 from pykmer.file import readFasta
 import pykmer.kset as kset
 import pykmer.kfset as kfset
-from pykmer.stats import logChi2CDF, counts2cdf, ksDistance2
+import pykmer.heap as heap
+from pykmer.stats import logBinGe, logBinLe
 from pykmer.exceptions import MismatchedK
 
 import math
@@ -20,53 +21,112 @@ def getK(ins):
             raise MismatchedK(k, k0)
     return k
 
-def findLcp(idx, x):
-    l = 0
-    h = len(idx)
-    while h > l:
-        m = (h + l) // 2
-        y = idx[m][0]
-        if y == x:
-            return m
-        if y < x:
-            l = m + 1
-        else:
-            h = m - 1
-    return l
+def group(K, J, n, xs):
+    py = 0
+    grp = []
+    S = 2*(K-J)
+    for (x,c) in xs:
+        y = x >> S
+        if y != py:
+            if len(grp) > 0:
+                yield (py, n, grp)
+            py = y
+            grp = []
+        grp.append((x,c))
+    if len(grp) > 0:
+        yield (py, n, grp)
 
-def resolveLcp(k, idx, lcps, x):
-    i = findLcp(idx, x)
-    z = min(i+1, len(idx))
-    for h in range(z):
-        j = z - h - 1
-        l = lcp(k, x, idx[j][0])
-        if l > lcps[j][0]:
-            lcps[j] = (l, x)
-        else:
-            break
-    for j in range(i + 1, len(idx)):
-        l = lcp(k, x, idx[j][0])
-        if l > lcps[j][0]:
-            lcps[j] = (l, x)
-        else:
-            break
+class Group:
+    def __init__(self, K, J, n, xs):
+        self.grps = group(K, J, n, xs)
+        self.curr = None
+        self.more = True
+        self.next()
 
-def gcat(k, x):
-    cs = [0, 0, 0, 0]
-    for i in range(k):
-        cs[x&3] += 1
-        x >>= 2
-    return (float(cs[0] + cs[3])/k, float(cs[1] + cs[2])/k)
+    def valid(self):
+        return self.more
 
-def null(g, s, j):
-    if j == 0:
-        return 0.0
-    return math.exp(s*math.log1p(-math.pow(g,j)))
+    def next(self):
+        try:
+            self.curr = self.grps.next()
+        except StopIteration:
+            self.more = False
+
+    def this(self):
+        assert self.valid()
+        return self.curr
+
+    def __lt__(self, other):
+        if not self.valid():
+            return False
+        if not other.valid():
+            return True
+        return self.this()[0] < other.this()[0]
 
 class Vars(Cmd):
     def run(self, opts):
-        refFn = opts['<kmers>']
-        k = getK(opts['<input>'])
+        K = getK(opts['<input>'])
+        J = K - 1
+        M = (1 << (2 * (K - J))) - 1
+
+        N = len(opts['<input>'])
+        h = heap.heap()
+        i = 0
+        for fn in opts['<input>']:
+            (_, xs) = kfset.read(fn)
+            i += 1
+            h.push(Group(K, J, i, xs))
+
+        while len(h) > 0:
+            xfs = []
+            g = h.pop()
+            gy = g.this()[0]
+            xfs.append(g.this())
+            g.next()
+            if g.valid():
+                h.push(g)
+            while len(h) > 0 and h.front().this()[0] == gy:
+                g = h.pop()
+                xfs.append(g.this())
+                g.next()
+                if g.valid():
+                    h.push(g)
+
+            if not can(J, gy):
+                continue
+
+            ds = []
+            gc = [0 for i in xrange(M+1)]
+            for (_, n, xc) in xfs:
+                t = sum([c for (x,c) in xc])
+                d = [0 for i in xrange(M+1)]
+                for (x,c) in xc:
+                    j = x & M
+                    gc[j] += c
+                    d[j] = c
+                ds.append((n, d))
+
+            res = ['*' for i in xrange(N)]
+            seen = set([])
+            gt = float(sum(gc))
+            for (n, d) in ds:
+                t = sum(d)
+                b = [0 for i in xrange((M+1)/4)]
+                for i in xrange(M+1):
+                    p = float(gc[i])/gt
+                    if 0.0 < p and p < 1.0:
+                        #vL = logBinLe(p, t, d[i])
+                        #vG = logBinGe(p, t, d[i])
+                        #v = min(vL, vG)
+                        v = logBinGe(p, t, d[i])
+                        if v > -10:
+                            w = i >> 2
+                            j = i & 3
+                            b[w] |= 1 << j
+                res[n-1] = ''.join([fasta(b0) for b0 in b])
+                seen.add(res[n-1])
+            if len(seen) > 1:
+                print '%s\t%s' % (render(J, gy), '\t'.join(res))
 
 def add(cmds):
     cmds['vars'] = Vars()
