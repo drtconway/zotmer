@@ -1,3 +1,4 @@
+import dist
 import dump
 import hist
 import info
@@ -10,6 +11,7 @@ import vars
 
 cmds = {}
 
+dist.add(cmds)
 dump.add(cmds)
 hist.add(cmds)
 info.add(cmds)
