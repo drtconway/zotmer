@@ -53,21 +53,64 @@ class Group:
             self.more = False
 
     def this(self):
+        if not self.valid():
+            print self
         assert self.valid()
         return self.curr
 
     def __lt__(self, other):
-        if not self.valid():
-            return False
-        if not other.valid():
-            return True
+        assert self.valid()
+        assert other.valid()
         return self.this()[0] < other.this()[0]
+
+    def __str__(self):
+        return repr(self.curr) + '\t' + repr(self.more)
 
 class Vars(Cmd):
     def run(self, opts):
         K = getK(opts['<input>'])
         J = K - 1
         M = (1 << (2 * (K - J))) - 1
+
+        if opts['-r'] is not None:
+            refFn = opts['-r']
+
+            (_, refXs) = kfset.read(refFn)
+            xs = list(group(K, J, 0, refXs))
+
+            for fn in opts['<input>']:
+                (_, samXs) = kfset.read(fn)
+                i = 0
+                for (yCtx, _, yGrp) in group(K, J, 0, samXs):
+                    while i < len(xs) and xs[i][0] < yCtx:
+                        i += 1
+                    assert i < len(xs)
+                    assert xs[i][0] == yCtx
+                    gt = float(sum([c for (x,c) in xs[i][2]]))
+                    gx = [0 for j in xrange(M+1)]
+                    for (x,c) in xs[i][2]:
+                        gx[x&M] = c
+                    st = sum([c for (x,c) in yGrp])
+                    sx = [0 for j in xrange(M+1)]
+                    for (x,c) in yGrp:
+                        sx[x&M] = c
+                    ss = []
+                    b = 0
+                    for j in xrange(M+1):
+                        p = float(gx[j])/gt
+                        v = 0.0
+                        if 0.0 < p and p < 1.0:
+                            v = logBinGe(p, st, sx[j])
+                            if v < -10:
+                                b |= 1 << j
+                        ss.append('%3.2g' % (v,))
+                    if b > 0:
+                        print '%s\t%s\t%s' % (render(J, yCtx), fasta(b), '\t'.join(ss))
+                    i += 1
+
+            return
+
+        # Parse files in parallel to get global distribution
 
         N = len(opts['<input>'])
         h = heap.heap()
@@ -85,15 +128,16 @@ class Vars(Cmd):
             g.next()
             if g.valid():
                 h.push(g)
+            for x in h.xs:
+                assert x.valid()
             while len(h) > 0 and h.front().this()[0] == gy:
                 g = h.pop()
                 xfs.append(g.this())
                 g.next()
                 if g.valid():
                     h.push(g)
-
-            if not can(J, gy):
-                continue
+                for i in xrange(len(h.xs)):
+                    assert h.xs[i].valid()
 
             ds = []
             gc = [0 for i in xrange(M+1)]
