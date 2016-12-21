@@ -1,36 +1,36 @@
-"""Almost python k-mer toolkit.
-
+"""
 Usage:
-    almost kmerize [-sm MEM] <k> <out> <input>...
-    almost merge <output> <input>...
-    almost trim <cutoff> <output> <kmers>
-    almost dist [-M measure]... <k> <input>...
-    almost hist <input>...
-    almost info <input>...
-    almost scan [-AX] <genes> <input>...
-    almost vars [-r ref] <input>...
-    almost sample [-S SEED] <prob> <output> <kmers>
-    almost dump <input>...
+    zot [options] <command> [<args>...]
 
-Options:
-    -A          print alleles
-    -c          cumulative scanning: combine LCPs across ksets
-    -m MEM      in-memory buffer size
-    -M measure  use "measure" for the distance between k-mer frequency sets.
-                Use "-M list" to get a list of available measures.
-    -r ref      use a reference sequence/k-mers
-    -S SEED     set the seed for the RNG
-    -s          generate a k-mer set rather than a k-mer frequency set
-    -X          create an index
+options:
+    --version   print version information
 """
 
-from inspect import getmembers, isclass
-from docopt import docopt
+import docopt
+import pkgutil
+import os
+import sys
+import importlib
 
 import commands
 
+def main():
+    #if 'ZOTMER_PLUGINS' in os.environ:
+    #    nms = os.environ['ZOTMER_PLUGINS'].split(':')
+    #    for nm in nms:
+    #        m = __import__(nm)
+    #        m.add(cmds)
+    args = docopt.docopt(__doc__, version='Zotmer k-mer toolkit 0.1')
+    modname = commands.__name__ + '.' + args['<command>']
+    try:
+        argv = [args['<command>']] + args['<args>']
+        m = importlib.import_module(modname)
+        return m.main(argv)
+    except ImportError:
+        print >> sys.stderr, "unable to load command `%s', use `zot help` for help." % (args['<command>'], )
+        return 1
+
+
 if __name__ == '__main__':
-    arguments = docopt(__doc__, version='Almost k-mer toolkit 0.1')
-    for (k,v) in arguments.items():
-        if k in commands.cmds and v:
-            commands.cmds[k].run(arguments)
+    main()
+

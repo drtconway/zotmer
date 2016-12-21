@@ -1,10 +1,18 @@
-from base import Cmd
+"""
+Usage:
+    zot dist [-M measure]... <k> <input>...
+
+Options:
+    -M measure  use "measure" for the distance between k-mer frequency sets.
+                Use "-M list" to get a list of available measures.
+"""
 
 import pykmer.kfset as kfset
 import pykmer.dist as dist
 from pykmer.exceptions import MismatchedK
 
 import array
+import docopt
 import fnmatch
 import sys
 
@@ -81,81 +89,78 @@ addMeasure('whittaker.quant',
 addMeasure('whittaker.qual',
            'Qualitative Whittaker distance', False, dist.whittaker)
 
-class Dist(Cmd):
-    def run(self, opts):
+def main(argv):
+    opts = docopt.docopt(__doc__, argv)
 
-        if "list" in opts['-M']:
-            ms = measures.keys()
-            ms.sort()
-            msg = []
-            for m in ms:
-                msg.append(m + '\t' + measures[m].desc)
-            print '\n'.join(msg)
-            return
-
-        allMs = measures.keys()
-        allMs.sort()
-
-        seen = set([])
-        bad = False
-        for mo in opts['-M']:
-            found = False
-            for m in allMs:
-                if fnmatch.fnmatch(m, mo):
-                    seen.add(m)
-                    found = True
-            if not found:
-                print >> sys.stderr, 'warning: measure \'%s\' not found. Use -M list to see all measures.' % (mo,)
-                bad = True
-        ms = list(seen)
+    if "list" in opts['-M']:
+        ms = measures.keys()
         ms.sort()
-
-        if len(ms) == 0 or bad:
-            return
-
-        K = int(opts['<k>'])
-
-        N = len(opts['<input>'])
-        fns = opts['<input>']
-
-        hdr = ['lhs.name', 'rhs.name']
-        fmt = ['%s', '%s']
-        vecNeeded = None
-        setNeeded = None
+        msg = []
         for m in ms:
-            hdr.append(m)
-            fmt.append('%g')
-            if measures[m].vec:
-                vecNeeded = m
-            else:
-                setNeeded = m
-        fmt = '\t'.join(fmt)
+            msg.append(m + '\t' + measures[m].desc)
+        print '\n'.join(msg)
+        return
 
-        print '\t'.join(hdr)
-        for i in xrange(N):
-            lhsVec = None
+    allMs = measures.keys()
+    allMs.sort()
+
+    seen = set([])
+    bad = False
+    for mo in opts['-M']:
+        found = False
+        for m in allMs:
+            if fnmatch.fnmatch(m, mo):
+                seen.add(m)
+                found = True
+        if not found:
+            print >> sys.stderr, 'warning: measure \'%s\' not found. Use -M list to see all measures.' % (mo,)
+            bad = True
+    ms = list(seen)
+    ms.sort()
+
+    if len(ms) == 0 or bad:
+        return
+
+    K = int(opts['<k>'])
+
+    N = len(opts['<input>'])
+    fns = opts['<input>']
+
+    hdr = ['lhs.name', 'rhs.name']
+    fmt = ['%s', '%s']
+    vecNeeded = None
+    setNeeded = None
+    for m in ms:
+        hdr.append(m)
+        fmt.append('%g')
+        if measures[m].vec:
+            vecNeeded = m
+        else:
+            setNeeded = m
+    fmt = '\t'.join(fmt)
+
+    print '\t'.join(hdr)
+    for i in xrange(N):
+        lhsVec = None
+        if vecNeeded is not None:
+            lhsVec = measures[vecNeeded].prep(K, fns[i])
+        lhsSet = None
+        if setNeeded is not None:
+            lhsSet = measures[setNeeded].prep(K, fns[i])
+
+        for j in xrange(i + 1, N):
+            rhsVec = None
             if vecNeeded is not None:
-                lhsVec = measures[vecNeeded].prep(K, fns[i])
-            lhsSet = None
+                rhsVec = measures[vecNeeded].prep(K, fns[j])
+            rhsSet = None
             if setNeeded is not None:
-                lhsSet = measures[setNeeded].prep(K, fns[i])
+                rhsSet = measures[setNeeded].prep(K, fns[j])
 
-            for j in xrange(i + 1, N):
-                rhsVec = None
-                if vecNeeded is not None:
-                    rhsVec = measures[vecNeeded].prep(K, fns[j])
-                rhsSet = None
-                if setNeeded is not None:
-                    rhsSet = measures[setNeeded].prep(K, fns[j])
-
-                vs = [fns[i], fns[j]]
-                for m in ms:
-                    if measures[m].vec:
-                        d = measures[m].measure(lhsVec, rhsVec)
-                    else:
-                        d = measures[m].measure(lhsSet, rhsSet)
-                    vs.append(d)
-                print fmt % tuple(vs)
-
-def add(cmds):
-    cmds['dist'] = Dist()
+            vs = [fns[i], fns[j]]
+            for m in ms:
+                if measures[m].vec:
+                    d = measures[m].measure(lhsVec, rhsVec)
+                else:
+                    d = measures[m].measure(lhsSet, rhsSet)
+                vs.append(d)
+            print fmt % tuple(vs)

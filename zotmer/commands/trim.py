@@ -1,9 +1,14 @@
-from base import Cmd
+"""
+Usage:
+    zot trim <cutoff> <output> <input>
+"""
 
 import pykmer.kfset as kfset
 from pykmer.container import probe
 
+import docopt
 import math
+import sys
 
 def sqr(x):
     return x * x
@@ -18,11 +23,9 @@ def smooth(h):
         den = 0
         for (xi,yi) in h.items():
             z = gauss(x0, xi, 1.5)
-            #print x0, xi, z, ly
             num += z*yi
             den += z
         y0 = num/den
-        #print x0, h.get(x0, 0), y0
         h1[x0] = y0
     return h1
 
@@ -50,18 +53,15 @@ def trim(xs, c):
         if f >= c:
             yield(x, f)
 
-class Trim(Cmd):
-    def run(self, opts):
-        inp = opts['<kmers>']
-        out = opts['<output>']
-        c = int(opts['<cutoff>'])
-        if c == 0:
-            c = infer(inp)
-            print 'inferred cutoff:', c
-        (m, xs) = kfset.read(inp)
-        K = m['K']
-        kfset.write(K, trim(xs, c), out, m)
+def main(argv):
+    opts = docopt.docopt(__doc__, argv)
 
-def add(cmds):
-    cmds['trim'] = Trim()
-
+    inp = opts['<input>']
+    out = opts['<output>']
+    c = int(opts['<cutoff>'])
+    if c == 0:
+        c = infer(inp)
+        print >> sys.stderr, 'inferred cutoff:', c
+    (m, xs) = kfset.read(inp)
+    K = m['K']
+    kfset.write(K, trim(xs, c), out, m)

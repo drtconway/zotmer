@@ -1,13 +1,15 @@
-from base import Cmd
+"""
+Usage:
+    zot info <input>...
+"""
 
 from pykmer.container import probe
 
-class Info(Cmd):
-    def run(self, opts):
-        for inp in opts['<input>']:
-            (m, _) = probe(inp)
-            print m
+import docopt
 
-def add(cmds):
-    cmds['info'] = Info()
+def main(argv):
+    opts = docopt.docopt(__doc__, argv)
 
+    for inp in opts['<input>']:
+        (m, _) = probe(inp)
+        print m

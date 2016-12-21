@@ -1,7 +1,12 @@
-from base import Cmd
+"""
+Usage:
+    zot merge <output> <input>...
+"""
 
 from pykmer.basics import render
 import pykmer.kfset as kfset
+
+import docopt
 
 def merge1(k, xs, ys):
     moreXs = True
@@ -113,24 +118,21 @@ def merge2(k, xs, ys):
         except StopIteration:
             moreYs = False
 
-class Merge(Cmd):
-    def run(self, opts):
-        K = None
-        zs = None
-        out = opts['<output>']
-        for inp in opts['<input>']:
-            (m, xs) = kfset.read(inp)
-            K0 = m['K']
-            if K is None :
-                K = K0
-                zs = xs
-            else:
-                if K != K0:
-                    raise MismatchedK(K, K0)
-                zs = merge2(K, zs, xs)
-        if K is not None:
-            kfset.write(K, zs, out)
+def main(argv):
+    opts = docopt.docopt(__doc__, argv)
 
-def add(cmds):
-    cmds['merge'] = Merge()
-
+    K = None
+    zs = None
+    out = opts['<output>']
+    for inp in opts['<input>']:
+        (m, xs) = kfset.read(inp)
+        K0 = m['K']
+        if K is None :
+            K = K0
+            zs = xs
+        else:
+            if K != K0:
+                raise MismatchedK(K, K0)
+            zs = merge2(K, zs, xs)
+    if K is not None:
+        kfset.write(K, zs, out)

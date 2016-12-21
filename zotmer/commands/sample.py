@@ -1,9 +1,17 @@
-from base import Cmd
+"""
+Usage:
+    zot sample [-DS SEED] <probability> <output> <input>
+
+Options:
+    -D          use deterministic sampling
+    -S SEED     use the given seed for the sampling
+"""
 
 import pykmer.kset as kset
 import pykmer.kfset as kfset
 from pykmer.container import probe
 
+import docopt
 import random
 
 def sample(p, xs):
@@ -11,24 +19,21 @@ def sample(p, xs):
         if random.random() < p:
             yield x
 
-class Sample(Cmd):
-    def run(self, opts):
-        p = float(opts['<prob>'])
-        if opts['-S'] is not None:
-            S = long(opts['-S'])
-            random.seed(S)
-        inp = opts['<kmers>']
-        out = opts['<output>']
-        (m, _) = probe(inp)
-        if m['type'] == 'k-mer set':
-            (m, xs) = kset.read(inp)
-            K = m['K']
-            kset.write(K, sample(p, xs), out, m)
-        else:
-            (m, xs) = kfset.read(inp)
-            K = m['K']
-            kfset.write(K, sample(p, xs), out, m)
+def main(argv):
+    opts = docopt.docopt(__doc__, argv)
 
-def add(cmds):
-    cmds['sample'] = Sample()
-
+    p = float(opts['<probability>'])
+    if opts['-S'] is not None:
+        S = long(opts['-S'])
+        random.seed(S)
+    inp = opts['<input>']
+    out = opts['<output>']
+    (m, _) = probe(inp)
+    if m['type'] == 'k-mer set':
+        (m, xs) = kset.read(inp)
+        K = m['K']
+        kset.write(K, sample(p, xs), out, m)
+    else:
+        (m, xs) = kfset.read(inp)
+        K = m['K']
+        kfset.write(K, sample(p, xs), out, m)
