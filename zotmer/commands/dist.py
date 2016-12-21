@@ -164,3 +164,6 @@ def main(argv):
                     d = measures[m].measure(lhsSet, rhsSet)
                 vs.append(d)
             print fmt % tuple(vs)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

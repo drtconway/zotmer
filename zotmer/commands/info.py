@@ -13,3 +13,6 @@ def main(argv):
     for inp in opts['<input>']:
         (m, _) = probe(inp)
         print m
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

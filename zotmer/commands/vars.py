@@ -179,3 +179,6 @@ def main(argv):
             seen.add(res[n-1])
         if len(seen) > 1:
             print '%s\t%s' % (render(J, gy), '\t'.join(res))
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

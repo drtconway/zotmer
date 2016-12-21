@@ -20,3 +20,6 @@ def main(argv):
     h.sort()
     for (f,c) in h:
         print '%d\t%d' % (f, c)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

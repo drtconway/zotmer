@@ -382,10 +382,7 @@ def main(argv):
                 #ed = lev(seqs[i], res[0][2])
                 ed = 0
                 print '%d\t%d\t%d\t%g\t%g\t%d\t%s\t%s' % (i, lens[i], len(res[0][2]), res[0][1], res[0][0], ed, nms[i], res[0][2])
-            #for j in xrange(len(res)):
-            #    if j > 0 and res[j][0] > qc:
-            #        break
-            #    print '%d\t%d\t%d\t%g\t%g\t%s\t%s' % (i, lens[i], len(res[j][2]), res[j][1], res[j][0], nms[i], res[j][2])
-            #    if res[j][0] > qc:
-            #        break
             sys.stdout.flush()
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

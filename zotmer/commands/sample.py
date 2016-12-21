@@ -37,3 +37,6 @@ def main(argv):
         (m, xs) = kfset.read(inp)
         K = m['K']
         kfset.write(K, sample(p, xs), out, m)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

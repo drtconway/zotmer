@@ -199,3 +199,6 @@ def main(argv):
 
     for fn in tmps:
         os.remove(fn)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

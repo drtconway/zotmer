@@ -25,3 +25,6 @@ def main(argv):
             K = m['K']
             for (x,f) in xs:
                 print '%s\t%d' % (render(K, x), f)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

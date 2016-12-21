@@ -136,3 +136,6 @@ def main(argv):
             zs = merge2(K, zs, xs)
     if K is not None:
         kfset.write(K, zs, out)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

@@ -64,3 +64,6 @@ def main(argv):
             (isec, union, d) = jaccard(xs, ys)
             (r1, r2) = approxBeta(isec+1, (union - isec) + 1, 0.99)
             print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, r1, r2)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
