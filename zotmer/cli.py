@@ -16,7 +16,9 @@ import importlib
 import commands
 
 def main():
-    args = docopt.docopt(__doc__, version='Zotmer k-mer toolkit 0.1')
+    args = docopt.docopt(__doc__,
+                         version='Zotmer k-mer toolkit 0.1',
+                         options_first=True)
 
     if args['<command>'] == 'help' and len(args['<args>']) != 1:
         print __doc__
