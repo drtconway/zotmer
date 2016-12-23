@@ -9,6 +9,7 @@ import pykmer.kfset as kfset
 from pykmer.container import probe
 
 import docopt
+import sys
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
