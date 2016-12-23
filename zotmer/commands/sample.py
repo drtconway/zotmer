@@ -36,7 +36,7 @@ def main(argv):
     inp = opts['<input>']
     out = opts['<output>']
     (m, _) = probe(inp)
-    if opts['-D'] is not None:
+    if opts['-D'] is None:
         if opts['-S'] is not None:
             S = long(opts['-S'])
             random.seed(S)

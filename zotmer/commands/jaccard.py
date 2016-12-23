@@ -1,14 +1,33 @@
 """
 Usage:
-    zot jaccard [-A] <input>...
+    zot jaccard [-ap P] <input>...
 
 Options:
-    -A          print all pairwise distances
+    -a          print all pairwise distances
+    -p P        Jaccard distance thresshhold for p-value computation.
+                Defaults to 0.95
 """
 
-import pykmer.exset as exset
+from pykmer.adaptors import kf2k
+from pykmer.container import probe
+import pykmer.kset as kset
+import pykmer.kfset as kfset
+from pykmer.stats import gammaP, logGammaP, log1mexp
 
+import array
 import docopt
+import math
+import sys
+
+def getKmers(fn):
+    (m, _) = probe(fn)
+    K = m['K']
+    if m['type'] == 'k-mer set':
+        (_, xs) = kset.read(fn)
+        return (K, array.array('L', xs))
+    else:
+        (_, xs) = kfset.read(fn)
+        return (K, array.array('L', kf2k(xs)))
 
 def jaccard(xs, ys):
     xz = len(xs)
@@ -35,35 +54,60 @@ def jaccard(xs, ys):
     d += yz - j
     return (b, b+d, float(b) / float(b + d))
 
-def approxBeta(a, b, x):
-    print (a + b + 1) * (1 - x)
-    w1 = math.pow(b*x, 1.0/3.0)
-    w2 = math.pow(a*(1.0 - x), 1.0/3.0)
-    z = 3.0*(w1* (1.0 - 1.0/(9.0*b)) - w2*(1.0 - 1.0/(9.0*a))) / math.sqrt(w1*w1/b + w2*w2/a)
-    sqrt2 = math.sqrt(2)
-    r1 = math.erf(z/sqrt2)
-    r2 = math.erfc(z/sqrt2)
-    return (r1, r2)
+def contFrac(f, g, n):
+    t = 0
+    for i in xrange(n):
+        j = n - i
+        t = g(j) / float(f(j) + t)
+    return f(0) + t
+
+def logBeta(a, b, x, n):
+    inv = False
+    if x >=  (a + 1.0)/(a + b + 1.0):
+        x = 1 - x
+        t = b
+        b = a
+        a = t
+        inv = True
+    def d(i):
+        if i == 0:
+            return 1.0
+        m = i // 2
+        if i & 1:
+            return - ((a + m)*(a + b + m)*x)/((a + 2*m)*(a + 2*m + 1))
+        else:
+            return (m * (b - m) * x)/((a + 2*m - 1)*(a + 2*m))
+
+    s = contFrac(d, lambda i: 1.0, n)
+    ls = math.log(s)
+    r = a*math.log(x) + b*math.log1p(x) + ls
+    if inv:
+        r = log1mexp(r)
+    return r
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     fns = opts['<input>']
+
     z = 1
-    if opts['--all'] is not None:
+    if opts['-a'] is not None:
         z = len(fns)
+
+    p = 0.95
+    if opts['-p'] is not None:
+        p = float(opts['-p'])
+
     for i in xrange(z):
-        (xm, xs) = exset.read(fns[i])
-        xK = xm['K']
+        (xK, xs) = getKmers(fns[i])
         for j in xrange(i + 1, len(fns)):
-            (ym, ys) = exset.read(fns[j])
-            yK = ym['K']
+            (yK, ys) = getKmers(fns[j])
             if xK != yK:
                 print >> sys.stderr, 'mismatched K:', fns[j]
-                return
+                sys.exit(1)
             (isec, union, d) = jaccard(xs, ys)
-            (r1, r2) = approxBeta(isec+1, (union - isec) + 1, 0.99)
-            print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, r1, r2)
+            pv = logBeta(isec+1, (union - isec) + 1, p, 10) / math.log(10)
+            print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, pv)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
