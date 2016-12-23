@@ -1,24 +1,24 @@
 """
 Usage:
-    zot ksnp [(-H DIST|-L DIST)] <input>...
+    zot ksnp [(-H DIST|-L DIST)] <output> <ref>
 
-Use the kSNP algorithm to find SNPs that distinguish the k-mer sets
-in the argument list.
+Use the kSNP algorithm (and extensions) to find candidate SNPs in a set
+of reference k-mers.
 
 Options:
-    -H DIST         Perform Hamming based matching allowing a maximum
-                    of DIST SNPs in the right hand side of k-mers.
-    -L DIST         Perform Levenshtein based matching allowing a
-                    maximum of DIST SNPs in the right hand side of
+    -H MAX          Perform Hamming based matching allowing a maximum
+                    of MAX SNPs in the right hand side of k-mers.
+    -L MAX          Perform Levenshtein based matching allowing a
+                    maximum of MAX SNPs in the right hand side of
                     k-mers.
 """
 
-from pykmer.basics import ham, lev, render
+from pykmer.basics import ham, lev
 from pykmer.bits import popcnt
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
 import pykmer.kset as kset
-from merge import merge1
+import pykmer.kfset as kfset
 
 import array
 import docopt
@@ -138,52 +138,26 @@ def levenshtein(K, d, xs):
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
-    K = None
-    ks = []
-    ss = []
-    for inp in opts['<input>']:
-        (meta, xs) = kset.read(inp)
-        if K is None:
-            K = meta['K']
-        else:
-            K0 = meta['K']
-            if K != K0:
-                print >> sys.stderr, 'kset %s has unexpected K (%d)' % (inp, K0)
-                sys.exit(1)
-        ks.append(array.array('L', xs))
-        ss.append(sparse(2*K, ks[-1]))
+    refFn = opts['<ref>']
+    (meta, xs) = kset.read(refFn)
 
-    u = ks[0].__iter__()
-    for i in xrange(1, len(ks)):
-        u = merge1(K, u, ks[i].__iter__())
+    K = meta['K']
 
     if opts['-H'] is not None:
         d = int(opts['-H'])
-        groups = hamming(K, d, u)
+        ref = hamming(K, d, xs)
     elif opts['-L'] is not None:
         d = int(opts['-L'])
-        groups = levenshtein(K, d, u)
+        ref = levenshtein(K, d, xs)
     else:
-        groups = ksnp(K, u)
+        ref = ksnp(K, xs)
 
-    for grp in groups:
-        ms = []
-        for x in grp:
-            vs = long(0)
-            for i in xrange(len(ss)):
-                if ss[i].access(x):
-                    vs |= 1 << i
-            ms.append(vs)
-        ok = True
-        for i in xrange(len(ms)):
-            for j in xrange(i + 1, len(ms)):
-                if (ms[i] & ms[j]) != 0:
-                    ok = False
-                    break
-            if not ok:
-                break
-        if ok:
-            print '\t'.join([render(K, x) for x in grp])
+    xs = []
+    for ys in ref:
+        xs += ys
+    xs.sort()
+
+    kset.write(K, xs, opts['<output>'])
 
 if __name__ == '__main__':
     main(sys.argv[1:])
