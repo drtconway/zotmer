@@ -1,10 +1,14 @@
 """
 Usage:
-    zot trim <cutoff> <output> <input>
+    zot trim [-s] <cutoff> <output> <input>
+
+Options:
+    -s          force output to be a k-mer set
 """
 
+from pykmer.adaptors import kf2k
+import pykmer.kset as kset
 import pykmer.kfset as kfset
-from pykmer.container import probe
 
 import docopt
 import math
@@ -62,9 +66,19 @@ def main(argv):
     if c == 0:
         c = infer(inp)
         print >> sys.stderr, 'inferred cutoff:', c
+
     (m, xs) = kfset.read(inp)
+
     K = m['K']
-    kfset.write(K, trim(xs, c), out, m)
+
+    outFmt = True
+    if opts['-s'] is not None and opts['-s']:
+        outFmt = False
+
+    if outFmt == False:
+        kset.write(K, kf2k(trim(xs, c)), out)
+    else:
+        kfset.write(K, trim(xs, c), out, m)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
