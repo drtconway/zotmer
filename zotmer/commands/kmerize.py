@@ -1,6 +1,6 @@
 """
 Usage:
-    zot kmerize [-esm MEM] <k> <output> <input>...
+    zot kmerize [-esm MEM] [-D FRAC [-S SEED]] <k> <output> <input>...
 
 Kmerize FASTA or FASTQ inputs to produce either a k-mer set or a k-mer
 frequency set. If neither -e nor -s are given, a k-mer frequency set
@@ -18,14 +18,17 @@ Options:
     -s          generate a k-mer set
     -e          generate an expanded k-mer set
     -m MEM      in-memory buffer size
+    -D FRAC     subsample k-mers, using FRAC proportion of k-mers
+    -S SEED     if -D is given, give a seed for determining the
+                subspace (defaults to 0).
 """
 
-from pykmer.basics import kmers
+from pykmer.basics import kmers, sub
 from pykmer.file import readFasta, readFastq
 import pykmer.kset as kset
 import pykmer.kfset as kfset
 
-from merge import merge1, merge2
+from merge import merge
 
 import docopt
 import array
@@ -135,13 +138,43 @@ def main(argv):
     tmps = []
     acgt = [0, 0, 0, 0]
     m = 0
+
+    d = None
+    if opts['-D'] is not None:
+        d = float(opts['-D'])
+
+        S = 0
+        if opts['-S'] is not None:
+            S = int(opts['-S'])
+
+        cacheYes = set([])
+        cacheNo = set([])
+
     for fn in opts['<input>']:
         for (nm, seq) in mkParser(fn):
-            for x in kmers(K, seq, True):
-                buf.add(x)
-                acgt[x&3] += 1
-                m += 1
-                n += 1
+            if d is None:
+                for x in kmers(K, seq, True):
+                    buf.add(x)
+                    acgt[x&3] += 1
+                    m += 1
+                    n += 1
+            else:
+                for x in kmers(K, seq, True):
+                    if x in cacheNo:
+                        continue
+                    if x not in cacheYes:
+                        if not sub(S, d, x):
+                            cacheNo.add(x)
+                            continue
+                        cacheYes.add(x)
+                    buf.add(x)
+                    acgt[x&3] += 1
+                    m += 1
+                    n += 1
+                if len(cacheYes) > 1000000:
+                    cacheYes = set([])
+                if len(cacheNo) > 1000000:
+                    cacheNo = set([])
             if n >= Z:
                 fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
                 tmps.append(fn)
@@ -169,14 +202,14 @@ def main(argv):
                 if zs is None:
                     zs = xs
                 else:
-                    zs = merge1(K, zs, xs)
+                    zs = merge(K, zs, xs, lambda x: x)
         else:
             for fn in tmps:
                 (_, xs) = kfset.read(fn)
                 if zs is None:
                     zs = xs
                 else:
-                    zs = merge2(K, zs, xs)
+                    zs = merge(K, zs, xs, lambda x: x[0])
     else:
         if s:
             zs = mkSet(buf.kmers())
