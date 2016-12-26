@@ -34,6 +34,7 @@ import docopt
 import array
 import gzip
 import os
+import subprocess
 import sys
 
 class KmerAccumulator:
@@ -71,7 +72,9 @@ def openFile(fn):
     if fn == "-":
         return sys.stdin
     if fn.endswith(".gz"):
-        return gzip.open(fn)
+        p = subprocess.Popen(['gunzip', '-c', fn], stdout=subprocess.PIPE)
+        return p.stdout
+        #return gzip.open(fn)
     return open(fn, 'rb')
 
 def stripCompressionSuffix(nm):
