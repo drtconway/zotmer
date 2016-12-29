@@ -12,7 +12,7 @@ from pykmer.adaptors import kf2k
 from pykmer.container import probe
 import pykmer.kset as kset
 import pykmer.kfset as kfset
-from pykmer.stats import gammaP, logGammaP, log1mexp
+from pykmer.stats import logAdd, logChoose
 
 import array
 import docopt
@@ -54,36 +54,19 @@ def jaccard(xs, ys):
     d += yz - j
     return (b, b+d, float(b) / float(b + d))
 
-def contFrac(f, g, n):
-    t = 0
-    for i in xrange(n):
-        j = n - i
-        t = g(j) / float(f(j) + t)
-    return f(0) + t
-
-def logBeta(a, b, x, n):
-    inv = False
-    if x >=  (a + 1.0)/(a + b + 1.0):
-        x = 1 - x
-        t = b
-        b = a
-        a = t
-        inv = True
-    def d(i):
-        if i == 0:
-            return 1.0
-        m = i // 2
-        if i & 1:
-            return - ((a + m)*(a + b + m)*x)/((a + 2*m)*(a + 2*m + 1))
-        else:
-            return (m * (b - m) * x)/((a + 2*m - 1)*(a + 2*m))
-
-    s = contFrac(d, lambda i: 1.0, n)
-    ls = math.log(s)
-    r = a*math.log(x) + b*math.log1p(x) + ls
-    if inv:
-        r = log1mexp(r)
-    return r
+def logIx(x, m, n):
+    lx = math.log(x)
+    j = m
+    s = logChoose(n + j - 1, j) + j * lx
+    while True:
+        j += 1
+        t = logChoose(n + j - 1, j) + j * lx
+        u = logAdd(s, t)
+        if u == s:
+            break
+        s = u
+    print j - m
+    return n*math.log1p(-x) + s
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
@@ -106,7 +89,7 @@ def main(argv):
                 print >> sys.stderr, 'mismatched K:', fns[j]
                 sys.exit(1)
             (isec, union, d) = jaccard(xs, ys)
-            pv = logBeta(isec+1, (union - isec) + 1, p, 10) / math.log(10)
+            pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
             print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, pv)
 
 if __name__ == '__main__':
