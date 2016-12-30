@@ -65,7 +65,6 @@ def logIx(x, m, n):
         if u == s:
             break
         s = u
-    print j - m
     return n*math.log1p(-x) + s
 
 def main(argv):
