@@ -74,7 +74,9 @@ def openFile(fn):
     if fn.endswith(".gz"):
         p = subprocess.Popen(['gunzip', '-c', fn], stdout=subprocess.PIPE)
         return p.stdout
-        #return gzip.open(fn)
+    if fn.endswith(".bz2"):
+        p = subprocess.Popen(['bunzip2', '-c', fn], stdout=subprocess.PIPE)
+        return p.stdout
     return open(fn, 'rb')
 
 def stripCompressionSuffix(nm):
@@ -102,17 +104,21 @@ def mkParser(fn):
             yield (grp[0], grp[1])
 
 def mkPairs(xs):
+    m = 0
     p = 0
     n = 0
     for x in xs:
         if x != p:
             if n > 0:
+                m += 1
                 yield (p, n)
             p = x
             n = 0
         n += 1
     if n > 0:
+        m += 1
         yield (p, n)
+    #print >> sys.stderr, 'wrote %d k-mers' % (m,)
 
 def mkSet(xs):
     p = 0
@@ -180,6 +186,7 @@ def main(argv):
                     cacheNo = set([])
             if n >= Z:
                 fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
+                #print >> sys.stderr, fn
                 tmps.append(fn)
                 if s:
                     kset.write(K, mkSet(buf.kmers()), fn)
@@ -205,14 +212,14 @@ def main(argv):
                 if zs is None:
                     zs = xs
                 else:
-                    zs = merge(K, zs, xs, lambda x: x)
+                    zs = merge(K, zs, xs, lambda x: x, lambda x, y: x)
         else:
             for fn in tmps:
                 (_, xs) = kfset.read(fn)
                 if zs is None:
                     zs = xs
                 else:
-                    zs = merge(K, zs, xs, lambda x: x[0])
+                    zs = merge(K, zs, xs, lambda x: x[0], lambda x, y: (x[0], x[1] + y[1]))
     else:
         if s:
             zs = mkSet(buf.kmers())

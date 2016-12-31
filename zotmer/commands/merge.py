@@ -15,7 +15,7 @@ import pykmer.kfset as kfset
 import docopt
 import sys
 
-def merge(k, xs, ys, access):
+def merge(k, xs, ys, access, combine):
     moreXs = True
     moreYs = True
 
@@ -50,7 +50,7 @@ def merge(k, xs, ys, access):
             continue
 
         assert xk == yk
-        yield x
+        yield combine(x, y)
         try:
             x = xs.next()
             xk = access(x)
@@ -125,7 +125,7 @@ def main(argv):
             if zs is None:
                 zs = xs
             else:
-                zs = merge(K, zs, xs, lambda x: x)
+                zs = merge(K, zs, xs, lambda x: x, lambda x, y: x)
         kset.write(K, zs, out)
     else:
         zs = None
@@ -136,7 +136,7 @@ def main(argv):
             if zs is None:
                 zs = xs
             else:
-                zs = merge(K, zs, xs, lambda x: x[0])
+                zs = merge(K, zs, xs, lambda x: x[0], lambda x, y: (x[0], x[1] + y[1]))
         kfset.write(K, zs, out)
 
 if __name__ == '__main__':
