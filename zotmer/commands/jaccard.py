@@ -54,7 +54,7 @@ def jaccard(xs, ys):
     d += yz - j
     return (b, b+d, float(b) / float(b + d))
 
-def logIxV(x, m, n):
+def logIx(x, m, n):
     lx = math.log(x)
     j = m
     v = logChoose(n + j - 1, j)
