@@ -54,13 +54,16 @@ def jaccard(xs, ys):
     d += yz - j
     return (b, b+d, float(b) / float(b + d))
 
-def logIx(x, m, n):
+def logIxV(x, m, n):
     lx = math.log(x)
     j = m
-    s = logChoose(n + j - 1, j) + j * lx
+    v = logChoose(n + j - 1, j)
+    s = v + j * lx
     while True:
         j += 1
-        t = logChoose(n + j - 1, j) + j * lx
+        v += math.log((n + j - 1.0) / j)
+        t = v + j * lx
+        #print j, t, s
         u = logAdd(s, t)
         if u == s:
             break
