@@ -93,6 +93,7 @@ def main(argv):
             (isec, union, d) = jaccard(xs, ys)
             pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
             print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, pv)
+            sys.stdout.flush()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
