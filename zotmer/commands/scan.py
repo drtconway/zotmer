@@ -12,9 +12,9 @@ from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
 from pykmer.container import probe
 from pykmer.exceptions import MismatchedK
 from pykmer.file import readFasta
+from pykmer.misc import unionfind
 from pykmer.sparse import sparse
 from pykmer.stats import counts2cdf, ksDistance2, log1mexp, logAdd, logChoose, logFac
-from pykmer.uf import uf
 import pykmer.kfset as kfset
 import pykmer.kset as kset
 
@@ -313,7 +313,7 @@ def main(argv):
             # Link up "de Bruijn" sequences
             m = (1 << (2*K - 2)) - 1
             py = 0
-            u = uf()
+            u = unionfind()
             for j in xrange(lens[i] - K + 1):
                 x = P[i][j]
                 y = x >> 2

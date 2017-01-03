@@ -4,7 +4,7 @@ from setuptools.command.test import test as TestCommand
 setup(name='zotmer',
         version='0.1',
         description='A python k-mer application workbench',
-        url='http://github.com/drtconway/pykmer',
+        url='http://github.com/drtconway/zotmer',
         author='Tom Conway',
         author_email='drtomc@gmail.com',
         license='Apache2',
