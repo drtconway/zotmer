@@ -29,21 +29,21 @@ def ksnp(K, xs):
     S = 2*(J + 1)
     M = (1 << (2*J)) - 1
 
-    gxs =  {}
-    gx = 0
+    itms =  {}
+    pfx = 0
     for x in xs:
         y = x >> S
         z = x & M
-        if y != gx:
-            for ys in gxs.values():
+        if y != pfx:
+            for ys in itms.values():
                 if len(ys) > 1:
                     yield ys
-            gxs = {}
-            gx = y
-        if z not in gxs:
-            gxs[z] = []
-        gxs[z].append(x)
-    for ys in gxs.values():
+            itms = {}
+            pfx = y
+        if z not in itms:
+            itms[z] = []
+        itms[z].append(x)
+    for ys in itms.values():
         if len(ys) > 1:
             yield ys
 
@@ -53,12 +53,12 @@ def hamming(K, d, xs):
     T = 2*J
     M = (1 << (2*J)) - 1
 
-    def grp(gxs):
-        z = len(gxs)
+    def grp(itms):
+        z = len(itms)
         u = unionfind()
         for i in xrange(z):
             for j in xrange(i + 1, z):
-                d0 = ham(gxs[i], gxs[j])
+                d0 = ham(itms[i], itms[j])
                 if d0 <= d:
                     u.union(i, j)
         idx = {}
@@ -70,7 +70,7 @@ def hamming(K, d, xs):
         for ys in idx.itervalues():
             if len(ys) == 1:
                 continue
-            zs = [gxs[y] for y in ys]
+            zs = [itms[y] for y in ys]
             m = 0
             for z in zs:
                 m |= 1 << ((z >> T) & 3)
@@ -78,17 +78,17 @@ def hamming(K, d, xs):
                 continue
             yield zs
 
-    gxs =  []
-    gx = 0
+    itms =  []
+    pfx = 0
     for x in xs:
         y = x >> S
-        if y != gx:
-            for g in grp(gxs):
+        if y != pfx:
+            for g in grp(itms):
                 yield g
-            gxs = []
-            gx = y
-        gxs.append(x)
-    for g in grp(gxs):
+            itms = []
+            pfx = y
+        itms.append(x)
+    for g in grp(itms):
         yield g
 
 def levenshtein(K, d, xs):
@@ -97,12 +97,12 @@ def levenshtein(K, d, xs):
     T = 2*J
     M = (1 << (2*J)) - 1
 
-    def grp(gxs):
-        z = len(gxs)
+    def grp(itms):
+        z = len(itms)
         u = unionfind()
         for i in xrange(z):
             for j in xrange(i + 1, z):
-                d0 = lev(K, gxs[i], gxs[j])
+                d0 = lev(K, itms[i], itms[j])
                 if d0 <= d:
                     u.union(i, j)
         idx = {}
@@ -114,7 +114,7 @@ def levenshtein(K, d, xs):
         for ys in idx.itervalues():
             if len(ys) == 1:
                 continue
-            zs = [gxs[y] for y in ys]
+            zs = [itms[y] for y in ys]
             m = 0
             for z in zs:
                 m |= 1 << ((z >> T) & 3)
@@ -122,17 +122,17 @@ def levenshtein(K, d, xs):
                 continue
             yield zs
 
-    gxs =  []
-    gx = 0
+    itms =  []
+    pfx = 0
     for x in xs:
         y = x >> S
-        if y != gx:
-            for g in grp(gxs):
+        if y != pfx:
+            for g in grp(itms):
                 yield g
-            gxs = []
-            gx = y
-        gxs.append(x)
-    for g in grp(gxs):
+            itms = []
+            pfx = y
+        itms.append(x)
+    for g in grp(itms):
         yield g
 
 def main(argv):
