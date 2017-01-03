@@ -7,14 +7,16 @@ Options:
     -X          create an index
 """
 
+from pykmer.adaptors import k2kf
 from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
-from pykmer.file import readFasta
-import pykmer.kset as kset
-import pykmer.kfset as kfset
-from pykmer.stats import counts2cdf, ksDistance2, log1mexp
-from pykmer.uf import uf
-from pykmer.sparse import sparse
+from pykmer.container import probe
 from pykmer.exceptions import MismatchedK
+from pykmer.file import readFasta
+from pykmer.sparse import sparse
+from pykmer.stats import counts2cdf, ksDistance2, log1mexp, logAdd, logChoose, logFac
+from pykmer.uf import uf
+import pykmer.kfset as kfset
+import pykmer.kset as kset
 
 import array
 import cPickle
@@ -111,6 +113,39 @@ def null(g, s, j):
 
 def logNull(g, s, j):
     return s*math.log1p(-math.pow(g,j))
+
+def logGammaPInt(n, x):
+    if x < n:
+        lx = math.log(x)
+        w = 0
+        v = logFac(n)
+        s = w - v
+        j = 1
+        while True:
+            w += lx
+            v += math.log(j+n)
+            u = logAdd(s, w - v)
+            if s == u:
+                break
+            s = u
+            j += 1
+        return n*lx + s - x
+    else:
+        lx = math.log(x)
+        s = 0
+        v = 0
+        for k in xrange(1, n):
+            v += math.log(k)
+            t = k*lx - v
+            u = logAdd(t, s)
+            s = u
+        w = min(s - x, -1e-200)
+        return log1mexp(w)
+
+def chi2(n, x):
+    d = int(math.ceil(n/2.0))
+    c2 = x/2.0
+    return logGammaPInt(d, c2)
 
 def uniq(xs):
     px = None
@@ -222,11 +257,16 @@ def main(argv):
     for fn in opts['<input>']:
         L = array.array('B', [0 for i in xrange(S.count())])
         Y = array.array('L', [0 for i in xrange(S.count())])
-        (meta, xs) = kfset.read(fn)
+        (m, _) = probe(fn)
+        if m['type'] == 'k-mer set':
+            (_, xs) = kset.read(fn)
+        else:
+            (_, xs) = kfset.read(fn)
+            xs = kf2k(xs)
         sacgt = [0, 0, 0, 0]
         X = array.array('L', [])
         M = 0
-        for (x,_) in xs:
+        for x in xs:
             X.append(x)
             sacgt[x&3] += 1
             #resolveLcp(K, S, L, Y, x)
@@ -239,9 +279,16 @@ def main(argv):
         print >> sys.stderr, "g =", g
         nm = [null(g, M, j) for j in range(0, K+1)]
 
+        # counts for computing distribution of prefix lengths
         cnt = [[0 for j in xrange(K+1)] for i in xrange(len(nms))]
+
+        # the k-mers that we pulled by lcp from the sample
+        # for each position of each query.
         P = [array.array('L', [0 for j in xrange(lens[i] - K + 1)]) for i in xrange(len(lens))]
+
+        # the length of the lcp for each position of each query.
         Q = [array.array('B', [0 for j in xrange(lens[i] - K + 1)]) for i in xrange(len(lens))]
+
         for i in xrange(S.count()):
             for j in xrange(T[i], T[i+1]):
                 n = U[j]
@@ -259,7 +306,9 @@ def main(argv):
                     P[n][p] = y
 
         for i in xrange(len(nms)):
-            qc = math.log(0.05/(lens[i] - K + 1)/2)
+            # iterate over the queries
+
+            qc = math.log(K*0.05/float(lens[i] - K + 1)/2)
 
             # Link up "de Bruijn" sequences
             m = (1 << (2*K - 2)) - 1
@@ -361,27 +410,44 @@ def main(argv):
                         seq[j + K - k - 1][x&3] += p
                         x >>= 2
                 ax = []
-                p = 0
+                p = None
+                inf = False
                 for j in xrange(len(seq)):
                     b = 0
                     for k in xrange(4):
                         if seq[j][k] < qc:
                             b |= 1 << k
                     ax.append(fasta(b))
-                    p += log1mexp(min(-1e-100, sum(seq[j])))
+                    ssj = sum(seq[j])
+                    if p is None:
+                        p = ssj
+                    else:
+                        p = logAdd(p, ssj)
+                    if ssj > -1e-300:
+                        inf = True
                 dst = counts2cdf(cnt[i])
                 (_, kd) = ksDistance2(dst, nm)
-                q = log1mexp(p)
-                res.append((q, kd, ''.join(ax)))
+                df = math.ceil(len(seq)/float(K))
+                if inf:
+                    q = 1e300
+                    pv = 0.0
+                else:
+                    q = 2*math.exp(p)
+                    pv = chi2(df, q)
+                res.append((pv, q, kd, ''.join(ax)))
 
             if len(res) == 0:
                 continue
 
             res.sort()
-            if res[0][0] < qc:
+            if True or res[0][0] < qc:
                 #ed = lev(seqs[i], res[0][2])
                 ed = 0
-                print '%d\t%d\t%d\t%g\t%g\t%d\t%s\t%s' % (i, lens[i], len(res[0][2]), res[0][1], res[0][0], ed, nms[i], res[0][2])
+                pv = res[0][0]/math.log(10)
+                c2 = res[0][1]
+                kd = res[0][2]
+                a = res[0][3]
+                print '%d\t%d\t%d\t%g\t%g\t%g\t%s\t%s' % (i, lens[i], len(a), kd, c2, pv, nms[i], a)
             sys.stdout.flush()
 
 if __name__ == '__main__':
