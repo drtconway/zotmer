@@ -70,6 +70,19 @@ def logIx(x, m, n):
         s = u
     return n*math.log1p(-x) + s
 
+def quantBeta(q, m, n):
+    lq = math.log(q)
+    l = 1e-10
+    h = 1 - 1e-10
+    while (h - l) > 1e-7:
+        x = (h + l) / 2.0
+        lp = logIx(x, m, n)
+        if lp < lq:
+            l = x
+        else:
+            h = x
+    return l
+
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
@@ -92,7 +105,9 @@ def main(argv):
                 sys.exit(1)
             (isec, union, d) = jaccard(xs, ys)
             pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
-            print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, pv)
+            q05 = quantBeta(0.05, isec+1, (union - isec) + 1)
+            q95 = quantBeta(0.95, isec+1, (union - isec) + 1)
+            print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t-%f\t+%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, d - q05, q95 - d, pv)
             sys.stdout.flush()
 
 if __name__ == '__main__':
