@@ -7,7 +7,7 @@ Options:
     -X          create an index
 """
 
-from pykmer.adaptors import k2kf
+from pykmer.adaptors import kf2k, k2kf
 from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
 from pykmer.container import probe
 from pykmer.exceptions import MismatchedK
@@ -440,7 +440,7 @@ def main(argv):
                 continue
 
             res.sort()
-            if True or res[0][0] < qc:
+            if res[0][0] < -2:
                 #ed = lev(seqs[i], res[0][2])
                 ed = 0
                 pv = res[0][0]/math.log(10)
