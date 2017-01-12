@@ -8,26 +8,14 @@ Options:
                 Defaults to 0.95
 """
 
-from pykmer.adaptors import kf2k
-from pykmer.container import probe
-import pykmer.kset as kset
-import pykmer.kfset as kfset
+from pykmer.container import container
+from pykmer.container.std import readKmers
 from pykmer.stats import logAdd, logChoose
 
 import array
 import docopt
 import math
 import sys
-
-def getKmers(fn):
-    (m, _) = probe(fn)
-    K = m['K']
-    if m['type'] == 'k-mer set':
-        (_, xs) = kset.read(fn)
-        return (K, array.array('L', xs))
-    else:
-        (_, xs) = kfset.read(fn)
-        return (K, array.array('L', kf2k(xs)))
 
 def jaccard(xs, ys):
     xz = len(xs)
@@ -88,27 +76,31 @@ def main(argv):
 
     fns = opts['<input>']
 
-    z = 1
+    Z = 1
     if opts['-a'] is not None:
-        z = len(fns)
+        Z = len(fns)
 
     p = 0.95
     if opts['-p'] is not None:
         p = float(opts['-p'])
 
-    for i in xrange(z):
-        (xK, xs) = getKmers(fns[i])
-        for j in xrange(i + 1, len(fns)):
-            (yK, ys) = getKmers(fns[j])
-            if xK != yK:
-                print >> sys.stderr, 'mismatched K:', fns[j]
-                sys.exit(1)
-            (isec, union, d) = jaccard(xs, ys)
-            pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
-            q05 = quantBeta(0.05, isec+1, (union - isec) + 1)
-            q95 = quantBeta(0.95, isec+1, (union - isec) + 1)
-            print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t-%f\t+%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, d - q05, q95 - d, pv)
-            sys.stdout.flush()
+    for i in xrange(Z):
+        with container(fns[i], 'r') as z0:
+            xK = z0.meta['K']
+            xs = array.array('L', readKmers(z0))
+            for j in xrange(i + 1, len(fns)):
+                with container(fns[j], 'r') as z1:
+                    yK = z1.meta['K']
+                    ys = array.array('L', readKmers(z1))
+                    if xK != yK:
+                        print >> sys.stderr, 'mismatched K:', fns[j]
+                        sys.exit(1)
+                    (isec, union, d) = jaccard(xs, ys)
+                    pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
+                    q05 = quantBeta(0.05, isec+1, (union - isec) + 1)
+                    q95 = quantBeta(0.95, isec+1, (union - isec) + 1)
+                    print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t-%f\t+%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, d - q05, q95 - d, pv)
+                    sys.stdout.flush()
 
 if __name__ == '__main__':
     main(sys.argv[1:])

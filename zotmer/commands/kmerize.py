@@ -1,6 +1,6 @@
 """
 Usage:
-    zot kmerize [-esm MEM] [-D FRAC [-S SEED]] <k> <output> <input>...
+    zot kmerize [-m MEM] [-D FRAC [-S SEED]] <k> <output> <input>...
 
 Kmerize FASTA or FASTQ inputs to produce either a k-mer set or a k-mer
 frequency set. If neither -e nor -s are given, a k-mer frequency set
@@ -15,18 +15,16 @@ Arguments:
                     - mykmers.e25 for an expanded k-mer set of 25-mers
 
 Options:
-    -s          generate a k-mer set
-    -e          generate an expanded k-mer set
     -m MEM      in-memory buffer size
     -D FRAC     subsample k-mers, using FRAC proportion of k-mers
     -S SEED     if -D is given, give a seed for determining the
                 subspace (defaults to 0).
 """
 
-from pykmer.basics import kmers, sub
+from pykmer.basics import kmers, render, sub
 from pykmer.file import readFasta, readFastq
-import pykmer.kset as kset
-import pykmer.kfset as kfset
+from pykmer.container import container
+from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
 
 from merge import merge
 
@@ -133,15 +131,20 @@ def mkSet(xs):
     if n > 0:
         yield p
 
+def hist(zs, h):
+    for z in zs:
+        h[z[1]] = 1 + h.get(z[1], 0)
+        yield z
+
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     K = int(opts['<k>'])
     out = opts['<output>']
-    s = opts['-s']
     Z = 1024*1024*32
     if opts['-m'] is not None:
         Z = 1024*1024*int(opts['-m'])
+
     buf = KmerAccumulator()
     n = 0
     tmps = []
@@ -159,8 +162,13 @@ def main(argv):
         cacheYes = set([])
         cacheNo = set([])
 
+    with container('tmp-' + out, 'w') as z:
+        pass
+
+    nr = 0
     for fn in opts['<input>']:
         for (nm, seq) in mkParser(fn):
+            nr += 1
             if d is None:
                 for x in kmers(K, seq, True):
                     buf.add(x)
@@ -185,63 +193,43 @@ def main(argv):
                 if len(cacheNo) > 1000000:
                     cacheNo = set([])
             if n >= Z:
-                fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
-                #print >> sys.stderr, fn
+                fn = 'tmps-%d' % (len(tmps),)
                 tmps.append(fn)
-                if s:
-                    kset.write(K, mkSet(buf.kmers()), fn)
-                else:
-                    kfset.write(K, mkPairs(buf.kmers()), fn)
+                with container('tmp-' + out, 'a') as z:
+                    writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
                 buf.clear()
                 n = 0
 
     if len(tmps):
         if len(buf):
-            fn = 'tmps-%d.k%s%d' % (len(tmps), ('' if s else 'f'), K)
+            fn = 'tmps-%d' % (len(tmps),)
             tmps.append(fn)
-            if s:
-                kset.write(K, mkSet(buf.kmers()), fn)
-            else:
-                kfset.write(K, mkPairs(buf.kmers()), fn)
+            with container('tmp-' + out, 'a') as z:
+                writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
             buf = []
 
-        zs = None
-        if s:
-            for fn in tmps:
-                (_, xs) = kset.read(fn)
-                if zs is None:
-                    zs = xs
-                else:
-                    zs = merge(K, zs, xs, lambda x: x, lambda x, y: x)
+    with container(out, 'w') as z:
+        h = {}
+        if len(tmps):
+            with container('tmp-' + out, 'r') as z0:
+                zs = None
+                for fn in tmps:
+                    xs = readKmersAndCounts(z0, fn)
+                    if zs is None:
+                        zs = xs
+                    else:
+                        zs = merge(K, zs, xs)
+                zs = hist(zs, h)
+                writeKmersAndCounts(K, zs, z)
         else:
-            for fn in tmps:
-                (_, xs) = kfset.read(fn)
-                if zs is None:
-                    zs = xs
-                else:
-                    zs = merge(K, zs, xs, lambda x: x[0], lambda x, y: (x[0], x[1] + y[1]))
-    else:
-        if s:
-            zs = mkSet(buf.kmers())
-        else:
-            zs = mkPairs(buf.kmers())
-
-    n = float(sum(acgt))
-    acgt = tuple([c/n for c in acgt])
-
-    meta = {
-        'total' : m,
-        'distinct' : len(buf),
-        'acgt' : acgt
-    }
-
-    if s:
-        kset.write(K, zs, out, meta)
-    else:
-        kfset.write(K, zs, out, meta)
-
-    for fn in tmps:
-        os.remove(fn)
+            zs = hist(mkPairs(buf.kmers()), h)
+            writeKmersAndCounts(K, zs, z)
+        n = float(sum(acgt))
+        acgt = [c/n for c in acgt]
+        z.meta['hist'] = h
+        z.meta['acgt'] = acgt
+        z.meta['reads'] = nr
+    os.remove('tmp-' + out)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

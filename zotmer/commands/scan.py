@@ -9,14 +9,13 @@ Options:
 
 from pykmer.adaptors import kf2k, k2kf
 from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
-from pykmer.container import probe
-from pykmer.exceptions import MismatchedK
+from pykmer.container import container
+from pykmer.container.vectors import read64, write64, read32, write32, read32s, write32s
+from pykmer.container.std import readKmers
 from pykmer.file import readFasta
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
 from pykmer.stats import counts2cdf, ksDistance2, log1mexp, logAdd, logChoose, logFac
-import pykmer.kfset as kfset
-import pykmer.kset as kset
 
 import array
 import cPickle
@@ -205,74 +204,50 @@ def main(argv):
         T.append(t)
         del tmp
 
-        meta = (K, S.count(), len(T), len(U), len(V), qacgt)
         gfn = opts['<genes>']
-        with open(gfn + '.meta', 'w') as f:
-            cPickle.dump(meta, f)
-        with open(gfn + '.kmers', 'w') as f:
-            S.xs.tofile(f)
-        with open(gfn + '.sums', 'w') as f:
-            T.tofile(f)
-        with open(gfn + '.nums', 'w') as f:
-            U.tofile(f)
-        with open(gfn + '.poss', 'w') as f:
-            V.tofile(f)
-        with open(gfn + '.lens', 'w') as f:
-            cPickle.dump(lens, f)
-        with open(gfn + '.names', 'w') as f:
-            cPickle.dump(nms, f)
-        with open(gfn + '.seqs', 'w') as f:
-            cPickle.dump(seqs, f)
+        with container(gfn, 'w') as z:
+            z.meta['K'] = K
+            z.meta['S'] = S.count()
+            write64(z, S.xs, 'S')
+            z.meta['T'] = len(T)
+            write64(z, T, 'T')
+            z.meta['U'] = len(U)
+            write32(z, U, 'U')
+            z.meta['V'] = len(V)
+            write32s(z, V, 'V')
+            z.meta['lens'] = lens
+            z.meta['qacgt'] = qacgt
+            z.meta['nms'] = nms
+            z.meta['seqs'] = seqs
 
         return
 
     print >> sys.stderr, "loading..."
 
     gfn = opts['<genes>']
-    with open(gfn + '.meta') as f:
-        meta = cPickle.load(f)
-    (K, zS, zT, zU, zV, qacgt) = meta
-    with open(gfn + '.kmers') as f:
-        S = array.array('L', [])
-        S.fromfile(f, zS)
+    with container(gfn, 'r') as z:
+        K = z.meta['K']
+        S = array.array('L', read64(z, 'S', z.meta['S']))
         S = sparse(2*K, S)
-    with open(gfn + '.sums') as f:
-        T = array.array('I', [])
-        T.fromfile(f, zT)
-    with open(gfn + '.nums') as f:
-        U = array.array('I', [])
-        U.fromfile(f, zU)
-    with open(gfn + '.poss') as f:
-        V = array.array('i', [])
-        V.fromfile(f, zV)
-    with open(gfn + '.lens') as f:
-        lens = cPickle.load(f)
-    with open(gfn + '.names') as f:
-        nms = cPickle.load(f)
-    with open(gfn + '.seqs') as f:
-        seqs = cPickle.load(f)
+        T = array.array('L', read64(z, 'T', z.meta['T']))
+        U = array.array('I', read32(z, 'U', z.meta['U']))
+        V = array.array('i', read32s(z, 'V', z.meta['V']))
+        lens = z.meta['lens']
+        qacgt = z.meta['qacgt']
+        nms = z.meta['nms']
+        seqs = z.meta['seqs']
 
     print >> sys.stderr, "done."
 
     for fn in opts['<input>']:
         L = array.array('B', [0 for i in xrange(S.count())])
         Y = array.array('L', [0 for i in xrange(S.count())])
-        (m, _) = probe(fn)
-        if m['type'] == 'k-mer set':
-            (_, xs) = kset.read(fn)
-        else:
-            (_, xs) = kfset.read(fn)
-            xs = kf2k(xs)
-        sacgt = [0, 0, 0, 0]
-        X = array.array('L', [])
-        M = 0
-        for x in xs:
-            X.append(x)
-            sacgt[x&3] += 1
-            #resolveLcp(K, S, L, Y, x)
-            M += 1
+        with container(fn, 'r') as z:
+            sacgt = z.meta['acgt']
+            xs = readKmers(z)
+            X = array.array('L', xs)
+        M = len(X)
         resolveAll(K, S, L, Y, X)
-        sacgt = [float(c)/float(M) for c in sacgt]
         X = sparse(2*K, X)
 
         g = sum([qp*sp for (qp, sp) in zip(qacgt, sacgt)])

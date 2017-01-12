@@ -1,32 +1,35 @@
 """
 Usage:
-    zot merge [(-s|-f)] <output> <input>...
-
-Options:
-    -s          force output to be a k-mer set
-    -f          force output to be a k-mer frequency set
+    zot merge <output> <input>...
 """
 
-from pykmer.adaptors import k2kf, kf2k
-from pykmer.container import probe
-import pykmer.kset as kset
-import pykmer.kfset as kfset
+from pykmer.basics import render
+from pykmer.container import container
+from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
 
 import docopt
 import sys
 
-def merge(k, xs, ys, access, combine):
+def pairs(xs):
+    i = 0
+    while i + 1 < len(xs):
+        yield (xs[i], xs[i + 1])
+        i += 2
+    if i < len(xs):
+        yields (xs[i], )
+
+def merge(xs, ys):
     moreXs = True
     moreYs = True
 
     try:
         x = xs.next()
-        xk = access(x)
+        xk = x[0]
     except StopIteration:
         moreXs = False
     try:
         y = ys.next()
-        yk = access(y)
+        yk = y[0]
     except StopIteration:
         moreYs = False
 
@@ -35,7 +38,7 @@ def merge(k, xs, ys, access, combine):
             yield x
             try:
                 x = xs.next()
-                xk = access(x)
+                xk = x[0]
             except StopIteration:
                 moreXs = False
             continue
@@ -44,21 +47,22 @@ def merge(k, xs, ys, access, combine):
             yield y
             try:
                 y = ys.next()
-                yk = access(y)
+                yk = y[0]
             except StopIteration:
                 moreYs = False
             continue
 
         assert xk == yk
-        yield combine(x, y)
+        yield (xk, x[1] + y[1])
+
         try:
             x = xs.next()
-            xk = access(x)
+            xk = x[0]
         except StopIteration:
             moreXs = False
         try:
             y = ys.next()
-            yk = access(y)
+            yk = y[0]
         except StopIteration:
             moreYs = False
 
@@ -76,68 +80,86 @@ def merge(k, xs, ys, access, combine):
         except StopIteration:
             moreYs = False
 
+def hist(zs, h, acgt):
+    for z in zs:
+        h[z[1]] = 1 + h.get(z[1], 0)
+        acgt[z[0]&3] += 1
+        yield z
+
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     K = None
-    types = []
-    itrs = []
-    ksets = 0
-    kfsets = 0
-    for inp in opts['<input>']:
-        (m, _) = probe(inp)
-
-        K0 = m['K']
-        if K is None:
-            K = K0
-        elif K0 != K:
-                raise MismatchedK(K, K0)
-
-        if m['type'] == 'k-mer set':
-            (_, xs) = kfset.read(inp)
-            types.append(False)
-            itrs.append(xs)
-            ksets += 1
-        else:
-            (_, xs) = kfset.read(inp)
-            types.append(True)
-            itrs.append(xs)
-            kfsets += 1
-
-    outFmt = None
-    if opts['-s'] is not None and opts['-s']:
-        outFmt = False
-    elif opts['-f'] is not None and opts['-f']:
-        outFmt = True
-    elif ksets > 0:
-        outFmt = False
-    else:
-        outFmt = True
 
     out = opts['<output>']
 
-    if outFmt == False:
-        zs = None
-        for i in xrange(len(types)):
-            xs = itrs[i]
-            if types[i] != outFmt:
-                xs = kf2k(xs)
-            if zs is None:
-                zs = xs
+    px = list(pairs(opts['<input>']))
+    if len(px) == 1:
+        with container(out, 'w') as z:
+            h = {}
+            acgt = [0, 0, 0, 0]
+            ix = px[0]
+            if len(ix) == 1:
+                with container(ix[0], 'r') as z0:
+                    K = z0.meta['K']
+                    xs = readKmersAndCounts(z0)
+                    zs = hist(xs, h, acgt)
+                    writeKmersAndCounts(K, xs, z)
             else:
-                zs = merge(K, zs, xs, lambda x: x, lambda x, y: x)
-        kset.write(K, zs, out)
-    else:
-        zs = None
-        for i in xrange(len(types)):
-            xs = itrs[i]
-            if types[i] != outFmt:
-                xs = k2kf(xs)
-            if zs is None:
-                zs = xs
+                with container(ix[0], 'r') as z0:
+                    K = z0.meta['K']
+                    xs = readKmersAndCounts(z0)
+                    with container(ix[1], 'r') as z1:
+                        K1 = z1.meta['K']
+                        if K1 != K:
+                            print >> sys.stderr, "mismatched K"
+                            sys.exit(1)
+                        ys = readKmersAndCounts(z1)
+                        zs = hist(merge(xs, ys), h, acgt)
+                        writeKmersAndCounts(K, zs, z)
+            n = float(sum(acgt))
+            acgt = [c/n for c in acgt]
+            z.meta['hist'] = h
+            z.meta['acgt'] = acgt
+        return
+
+    tmps = []
+    with container('tmp-' + out, 'w') as z:
+        for ix in px:
+            if len(ix) == 1:
+                nm = 'tmp-' + str(len(tmps))
+                tmps.append(nm)
+                with container(ix[0], 'r') as z0:
+                    xs = readKmersAndCounts(z0)
+                    writeKmersAndCounts(K, xs, z, nm)
             else:
-                zs = merge(K, zs, xs, lambda x: x[0], lambda x, y: (x[0], x[1] + y[1]))
-        kfset.write(K, zs, out)
+                nm = 'tmp-' + str(len(tmps))
+                tmps.append(nm)
+                with container(ix[0], 'r') as z0:
+                    xs = readKmersAndCounts(z0)
+                    with container(ix[1], 'r') as z1:
+                        ys = readKmersAndCounts(z1)
+                        writeKmersAndCounts(K, merge(xs, ys), z, nm)
+
+    with container(out, 'w') as z:
+        h = {}
+        acgt = [0, 0, 0, 0]
+        with container('tmp-' + out, 'r') as z0:
+            zs = None
+            for fn in tmps:
+                xs = readKmersAndCounts(z0, fn)
+                if zs is None:
+                    zs = xs
+                else:
+                    zs = merge(zs, xs)
+            zs = hist(zs, h, acgt)
+            writeKmersAndCounts(K, zs, z)
+        n = float(sum(acgt))
+        acgt = [c/n for c in acgt]
+        z.meta['hist'] = h
+        z.meta['acgt'] = acgt
+
+    os.remove('tmp-' + out)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

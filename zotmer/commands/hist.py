@@ -1,25 +1,26 @@
 """
 Usage:
     zot hist <input>...
+
+Options:
+    -u              update the input container to include the histogram
 """
 
-import pykmer.kfset as kfset
+from pykmer.container import container
 
 import docopt
+import sys
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
-    h = {}
     for inp in opts['<input>']:
-        (m, xs) = kfset.read(inp)
-        for (_, f) in xs:
-            c = h.get(f, 0)
-            h[f] = c + 1
-    h = h.items()
-    h.sort()
-    for (f,c) in h:
-        print '%d\t%d' % (f, c)
+        with container(inp, 'r') as z:
+            if 'hist' in z.meta:
+                h = z.meta['hist'].items()
+                h.sort()
+                for (f,c) in h:
+                    print '%s\t%d\t%d' % (inp, f, c)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

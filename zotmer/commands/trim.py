@@ -1,14 +1,16 @@
 """
 Usage:
-    zot trim [-s] <cutoff> <output> <input>
+    zot trim [-sc CUTOFF] <output> <input>
 
 Options:
+    -c CUTOFF   discard k-mers with frequency less than CUTOFF. A
+                cutoff of 0 (the default) indicates that cutoff
+                inference should be used.
     -s          force output to be a k-mer set
 """
 
-from pykmer.adaptors import kf2k
-import pykmer.kset as kset
-import pykmer.kfset as kfset
+from pykmer.container import container
+from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
 
 import docopt
 import math
@@ -33,14 +35,7 @@ def smooth(h):
         h1[x0] = y0
     return h1
 
-def infer(fn):
-    (m, xs) = kfset.read(fn)
-    K = m['K']
-    h = {}
-    for (x, f) in xs:
-        c = h.get(f, 0)
-        h[f] = c+1
-
+def infer(K, h):
     h1 = smooth(h)
     h1 = h1.items()
     h1.sort()
@@ -55,30 +50,30 @@ def infer(fn):
 def trim(xs, c):
     for (x,f) in xs:
         if f >= c:
-            yield(x, f)
+            yield (x, f)
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     inp = opts['<input>']
     out = opts['<output>']
-    c = int(opts['<cutoff>'])
-    if c == 0:
-        c = infer(inp)
-        print >> sys.stderr, 'inferred cutoff:', c
 
-    (m, xs) = kfset.read(inp)
+    c = 0
+    if opts['-c'] is not None:
+        c = int(opts['-u'])
 
-    K = m['K']
-
-    outFmt = True
-    if opts['-s'] is not None and opts['-s']:
-        outFmt = False
-
-    if outFmt == False:
-        kset.write(K, kf2k(trim(xs, c)), out)
-    else:
-        kfset.write(K, trim(xs, c), out, m)
+    with container(inp, 'r') as z:
+        K = z.meta['K']
+        h = z.meta['hist']
+        if c == 0:
+            c = infer(K, h)
+            print >> sys.stderr, 'inferred cutoff:', c
+        xs = readKmersAndCounts(z)
+        with container(out, 'w') as w:
+            w.meta = z.meta.copy()
+            del w.meta['kmers']
+            del w.meta['counts']
+            writeKmersAndCounts(K, trim(xs, c), w)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
