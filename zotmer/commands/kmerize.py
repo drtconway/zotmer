@@ -34,6 +34,7 @@ import gzip
 import os
 import subprocess
 import sys
+import time
 
 class KmerAccumulator:
     def __init__(self):
@@ -166,9 +167,14 @@ def main(argv):
         pass
 
     nr = 0
+    t0 = time.time()
     for fn in opts['<input>']:
         for (nm, seq) in mkParser(fn):
             nr += 1
+            if nr & (1024*1024 - 1) == 0:
+                t1 = time.time()
+                print >> sys.stderr, 'reads processed:', nr, (1024*1024)/(t1 - t0), 'reads/second'
+                t0 = t1
             if d is None:
                 for x in kmers(K, seq, True):
                     buf.add(x)
@@ -192,7 +198,7 @@ def main(argv):
                     cacheYes = set([])
                 if len(cacheNo) > 1000000:
                     cacheNo = set([])
-            if n >= Z:
+            if 8*n >= Z:
                 fn = 'tmps-%d' % (len(tmps),)
                 tmps.append(fn)
                 with container('tmp-' + out, 'a') as z:
@@ -218,7 +224,7 @@ def main(argv):
                     if zs is None:
                         zs = xs
                     else:
-                        zs = merge(K, zs, xs)
+                        zs = merge(zs, xs)
                 zs = hist(zs, h)
                 writeKmersAndCounts(K, zs, z)
         else:

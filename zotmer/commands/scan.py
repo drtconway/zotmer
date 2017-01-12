@@ -100,10 +100,8 @@ def succ(K, xs, x):
     m = (1 << (2*K)) - 1
     y0 = (x << 2) & m
     y1 = y0 + 4
-    #r0 = xs.rank(y0)
-    #r1 = xs.rank(y1)
     (r0, r1) = xs.rank2(y0, y1)
-    return [xs.select(i) for i in xrange(r0, r1)]
+    return range(r0, r1)
 
 def null(g, s, j):
     if j == 0:
