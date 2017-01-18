@@ -60,7 +60,7 @@ def main(argv):
 
     c = 0
     if opts['-c'] is not None:
-        c = int(opts['-u'])
+        c = int(opts['-c'])
 
     with container(inp, 'r') as z:
         K = z.meta['K']
