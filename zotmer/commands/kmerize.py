@@ -35,6 +35,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 
 class KmerAccumulator:
     def __init__(self):
@@ -163,7 +164,8 @@ def main(argv):
         cacheYes = set([])
         cacheNo = set([])
 
-    with container('tmp-' + out, 'w') as z:
+    tmpnm = '/tmp/' + str(uuid.uuid4()) + '.pmc'
+    with container(tmpnm, 'w') as z:
         pass
 
     nr = 0
@@ -201,7 +203,7 @@ def main(argv):
             if 8*n >= Z:
                 fn = 'tmps-%d' % (len(tmps),)
                 tmps.append(fn)
-                with container('tmp-' + out, 'a') as z:
+                with container(tmpnm, 'a') as z:
                     writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
                 buf.clear()
                 n = 0
@@ -210,14 +212,14 @@ def main(argv):
         if len(buf):
             fn = 'tmps-%d' % (len(tmps),)
             tmps.append(fn)
-            with container('tmp-' + out, 'a') as z:
+            with container(tmpnm, 'a') as z:
                 writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
             buf = []
 
     with container(out, 'w') as z:
         h = {}
         if len(tmps):
-            with container('tmp-' + out, 'r') as z0:
+            with container(tmpnm, 'r') as z0:
                 zs = None
                 for fn in tmps:
                     xs = readKmersAndCounts(z0, fn)
@@ -235,7 +237,7 @@ def main(argv):
         z.meta['hist'] = h
         z.meta['acgt'] = acgt
         z.meta['reads'] = nr
-    os.remove('tmp-' + out)
+    os.remove(tmpnm)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
