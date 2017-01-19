@@ -8,7 +8,9 @@ from pykmer.container import container
 from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
 
 import docopt
+import os
 import sys
+import uuid
 
 def pairs(xs):
     i = 0
@@ -16,7 +18,7 @@ def pairs(xs):
         yield (xs[i], xs[i + 1])
         i += 2
     if i < len(xs):
-        yields (xs[i], )
+        yield (xs[i], )
 
 def merge(xs, ys):
     moreXs = True
@@ -124,7 +126,8 @@ def main(argv):
         return
 
     tmps = []
-    with container('tmp-' + out, 'w') as z:
+    tmpnm = '/tmp/' + str(uuid.uuid4()) + '.pmc'
+    with container(tmpnm, 'w') as z:
         for ix in px:
             if len(ix) == 1:
                 nm = 'tmp-' + str(len(tmps))
@@ -144,7 +147,7 @@ def main(argv):
     with container(out, 'w') as z:
         h = {}
         acgt = [0, 0, 0, 0]
-        with container('tmp-' + out, 'r') as z0:
+        with container(tmpnm, 'r') as z0:
             zs = None
             for fn in tmps:
                 xs = readKmersAndCounts(z0, fn)
@@ -159,7 +162,7 @@ def main(argv):
         z.meta['hist'] = h
         z.meta['acgt'] = acgt
 
-    os.remove('tmp-' + out)
+    os.remove(tmpnm)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
