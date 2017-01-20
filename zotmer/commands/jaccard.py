@@ -1,10 +1,11 @@
 """
 Usage:
-    zot jaccard [-ap P] <input>...
+    zot jaccard [-abp P] <input>...
 
 Options:
     -a          print all pairwise distances
-    -p P        Jaccard distance thresshhold for p-value computation.
+    -b          brief output - exclude statistical calculations
+    -p P        Jaccard distance thresshhold for p-value computation
                 Defaults to 0.95
 """
 
@@ -77,7 +78,7 @@ def main(argv):
     fns = opts['<input>']
 
     Z = 1
-    if opts['-a'] is not None:
+    if opts['-a']:
         Z = len(fns)
 
     p = 0.95
@@ -96,10 +97,13 @@ def main(argv):
                         print >> sys.stderr, 'mismatched K:', fns[j]
                         sys.exit(1)
                     (isec, union, d) = jaccard(xs, ys)
-                    pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
-                    q05 = quantBeta(0.05, isec+1, (union - isec) + 1)
-                    q95 = quantBeta(0.95, isec+1, (union - isec) + 1)
-                    print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t-%f\t+%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, d - q05, q95 - d, pv)
+                    if opts['-b']:
+                        print '%s\t%s\t%d\t%d\t%d\t%d\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d)
+                    else:
+                        pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
+                        q05 = quantBeta(0.05, isec+1, (union - isec) + 1)
+                        q95 = quantBeta(0.95, isec+1, (union - isec) + 1)
+                        print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t-%f\t+%f\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d, d - q05, q95 - d, pv)
                     sys.stdout.flush()
 
 if __name__ == '__main__':

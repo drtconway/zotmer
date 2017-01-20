@@ -133,16 +133,36 @@ def main(argv):
                 nm = 'tmp-' + str(len(tmps))
                 tmps.append(nm)
                 with container(ix[0], 'r') as z0:
+                    if K is None:
+                        K = z0.meta['K']
+                    else:
+                        K0 = z0.meta['K']
+                        if K0 != K:
+                            print >> sys.stderr, "mismatched K"
+                            sys.exit(1)
                     xs = readKmersAndCounts(z0)
                     writeKmersAndCounts(K, xs, z, nm)
             else:
                 nm = 'tmp-' + str(len(tmps))
                 tmps.append(nm)
                 with container(ix[0], 'r') as z0:
+                    if K is None:
+                        K = z0.meta['K']
+                    else:
+                        K0 = z0.meta['K']
+                        if K0 != K:
+                            print >> sys.stderr, "mismatched K"
+                            sys.exit(1)
                     xs = readKmersAndCounts(z0)
                     with container(ix[1], 'r') as z1:
+                        K1 = z1.meta['K']
+                        if K1 != K:
+                            print >> sys.stderr, "mismatched K"
+                            sys.exit(1)
                         ys = readKmersAndCounts(z1)
                         writeKmersAndCounts(K, merge(xs, ys), z, nm)
+
+    assert K is not None
 
     with container(out, 'w') as z:
         h = {}
