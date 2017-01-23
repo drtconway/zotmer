@@ -1,4 +1,4 @@
-from zotmer.helpers.merge import merge2
+from zotmer.library.merge import merge2
 from pykmer.file import tmpfile
 from pykmer.container import container
 from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts

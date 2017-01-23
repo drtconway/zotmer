@@ -21,10 +21,11 @@ Options:
                 subspace (defaults to 0).
 """
 
-from pykmer.basics import kmers, render, sub
-from pykmer.file import readFasta, readFastq
+from pykmer.basics import kmersList, render, sub
 from pykmer.container import container
 from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
+from pykmer.file import openFile, readFasta, readFastqBlock, tmpfile
+from zotmer.library.merge import merge2
 
 from merge import merge
 
@@ -35,7 +36,6 @@ import os
 import subprocess
 import sys
 import time
-import uuid
 
 class KmerAccumulator:
     def __init__(self):
@@ -57,6 +57,15 @@ class KmerAccumulator:
         self.toc[xh].append(xl)
         self.z += 1
 
+    def addList(self, xs):
+        for x in xs:
+            xh = x >> 32
+            xl = x & 0xFFFFFFFF
+            if xh not in self.toc:
+                self.toc[xh] = array.array('I')
+            self.toc[xh].append(xl)
+            self.z += 1
+
     def kmers(self):
         xhs = self.toc.keys()
         xhs.sort()
@@ -68,16 +77,26 @@ class KmerAccumulator:
                 x = x0 | xl
                 yield x
 
-def openFile(fn):
-    if fn == "-":
-        return sys.stdin
-    if fn.endswith(".gz"):
-        p = subprocess.Popen(['gunzip', '-c', fn], stdout=subprocess.PIPE)
-        return p.stdout
-    if fn.endswith(".bz2"):
-        p = subprocess.Popen(['bunzip2', '-c', fn], stdout=subprocess.PIPE)
-        return p.stdout
-    return open(fn, 'rb')
+    def stat(self):
+        h = {}
+        for (xh, xls) in self.toc.iteritems():
+            l = len(xls)
+            h[l] = 1 + h.get(l, 0)
+
+        h = h.items()
+        h.sort()
+        for (l,c) in h:
+            print '%d\t%d' % (l, c)
+
+def pairs(xs):
+    i = 0
+    res = []
+    while i + 1 < len(xs):
+        res.append((xs[i], xs[i + 1]))
+        i += 2
+    if i < len(xs):
+        res.append((xs[i], ))
+    return res
 
 def stripCompressionSuffix(nm):
     if nm.endswith('.gz'):
@@ -98,10 +117,10 @@ def isFasta(nm):
 def mkParser(fn):
     if isFasta(fn):
         for (nm, seq) in readFasta(openFile(fn)):
-            yield (nm, seq)
+            yield [(nm, seq)]
     else:
-        for grp in readFastq(openFile(fn)):
-            yield (grp[0], grp[1])
+        for grps in readFastqBlock(openFile(fn)):
+            yield [(grp[0], grp[1]) for grp in grps]
 
 def mkPairs(xs):
     m = 0
@@ -118,20 +137,6 @@ def mkPairs(xs):
     if n > 0:
         m += 1
         yield (p, n)
-    #print >> sys.stderr, 'wrote %d k-mers' % (m,)
-
-def mkSet(xs):
-    p = 0
-    n = 0
-    for x in xs:
-        if x != p:
-            if n > 0:
-                yield p
-            p = x
-            n = 0
-        n += 1
-    if n > 0:
-        yield p
 
 def hist(zs, h):
     for z in zs:
@@ -164,80 +169,102 @@ def main(argv):
         cacheYes = set([])
         cacheNo = set([])
 
-    tmpnm = '/tmp/' + str(uuid.uuid4()) + '.pmc'
+    tmpnm = tmpfile('.pmc')
     with container(tmpnm, 'w') as z:
         pass
+
+    PN = 1024*1024
 
     nr = 0
     t0 = time.time()
     for fn in opts['<input>']:
-        for (nm, seq) in mkParser(fn):
-            nr += 1
-            if nr & (1024*1024 - 1) == 0:
-                t1 = time.time()
-                print >> sys.stderr, 'reads processed:', nr, (1024*1024)/(t1 - t0), 'reads/second'
-                t0 = t1
-            if d is None:
-                for x in kmers(K, seq, True):
-                    buf.add(x)
-                    acgt[x&3] += 1
-                    m += 1
-                    n += 1
-            else:
-                for x in kmers(K, seq, True):
-                    if x in cacheNo:
-                        continue
-                    if x not in cacheYes:
-                        if not sub(S, d, x):
-                            cacheNo.add(x)
+        for rds in mkParser(fn):
+            for (nm, seq) in rds:
+                nr += 1
+                if nr & (PN - 1) == 0:
+                    t1 = time.time()
+                    print >> sys.stderr, 'reads processed:', nr, (PN)/(t1 - t0), 'reads/second'
+                    t0 = t1
+                    #buf.stat()
+                xs = kmersList(K, seq, True)
+                if d is None:
+                    buf.addList(xs)
+                    for x in xs:
+                        acgt[x&3] += 1
+                        m += 1
+                        n += 1
+                else:
+                    for x in xs:
+                        if x in cacheNo:
                             continue
-                        cacheYes.add(x)
-                    buf.add(x)
-                    acgt[x&3] += 1
-                    m += 1
-                    n += 1
-                if len(cacheYes) > 1000000:
-                    cacheYes = set([])
-                if len(cacheNo) > 1000000:
-                    cacheNo = set([])
-            if 8*n >= Z:
-                fn = 'tmps-%d' % (len(tmps),)
-                tmps.append(fn)
-                with container(tmpnm, 'a') as z:
-                    writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
-                buf.clear()
-                n = 0
+                        if x not in cacheYes:
+                            if not sub(S, d, x):
+                                cacheNo.add(x)
+                                continue
+                            cacheYes.add(x)
+                        buf.add(x)
+                        acgt[x&3] += 1
+                        m += 1
+                        n += 1
+                    if len(cacheYes) > 1000000:
+                        cacheYes = set([])
+                    if len(cacheNo) > 1000000:
+                        cacheNo = set([])
+                if 8*n >= Z:
+                    fn = 'tmps-%d' % (len(tmps),)
+                    #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
+                    tmps.append(fn)
+                    with container(tmpnm, 'a') as z:
+                        writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
+                    buf.clear()
+                    n = 0
 
-    if len(tmps):
-        if len(buf):
-            fn = 'tmps-%d' % (len(tmps),)
-            tmps.append(fn)
-            with container(tmpnm, 'a') as z:
-                writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
-            buf = []
+    t1 = time.time()
+    print >> sys.stderr, 'reads processed:', nr, (nr % PN)/(t1 - t0), 'reads/second'
+
+    if len(tmps) and len(buf):
+        fn = 'tmps-%d' % (len(tmps),)
+        #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
+        tmps.append(fn)
+        with container(tmpnm, 'a') as z:
+            writeKmersAndCounts(K, mkPairs(buf.kmers()), z, fn)
+        buf = []
+
+    while len(tmps) > 2:
+        tmpnm2 = tmpfile('.pmc')
+        tmps2 = []
+        with container(tmpnm, 'r') as z0, container(tmpnm2, 'w') as z:
+            ps = pairs(tmps)
+            for p in ps:
+                fn = 'tmps-%d' % (len(tmps2),)
+                tmps2.append(fn)
+                if len(p) == 1:
+                    writeKmersAndCounts(K, readKmersAndCounts(z0, p[0]), z, fn)
+                    continue
+                h = {}
+                merge2(z, K, readKmersAndCounts(z0, p[0]), readKmersAndCounts(z0, p[1]), h, fn)
+        os.remove(tmpnm)
+        tmpnm = tmpnm2
+        tmps = tmps2
 
     with container(out, 'w') as z:
         h = {}
-        if len(tmps):
-            with container(tmpnm, 'r') as z0:
-                zs = None
-                for fn in tmps:
-                    xs = readKmersAndCounts(z0, fn)
-                    if zs is None:
-                        zs = xs
-                    else:
-                        zs = merge(zs, xs)
-                zs = hist(zs, h)
-                writeKmersAndCounts(K, zs, z)
-        else:
+        if len(tmps) == 0:
             zs = hist(mkPairs(buf.kmers()), h)
             writeKmersAndCounts(K, zs, z)
+        elif len(tmps) == 1:
+            with container(tmpnm, 'r') as z0:
+                writeKmersAndCounts(K, hist(readKmersAndCounts(z0, tmps[0]), h), z)
+        else:
+            assert len(tmps) == 2
+            with container(tmpnm, 'r') as z0:
+                merge2(z, K, readKmersAndCounts(z0, tmps[0]), readKmersAndCounts(z0, tmps[1]), h)
         n = float(sum(acgt))
         acgt = [c/n for c in acgt]
         z.meta['hist'] = h
         z.meta['acgt'] = acgt
         z.meta['reads'] = nr
-    os.remove(tmpnm)
+    #os.remove(tmpnm)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
