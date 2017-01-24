@@ -7,7 +7,6 @@ Options:
     -X          create an index
 """
 
-from pykmer.adaptors import kf2k, k2kf
 from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
 from pykmer.container import container
 from pykmer.container.vectors import read64, write64, read32, write32, read32s, write32s
