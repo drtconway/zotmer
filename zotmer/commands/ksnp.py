@@ -155,7 +155,7 @@ def main(argv):
         for ys in ref:
             xs += ys
     xs.sort()
-    with container(opts['<output>'], 'w') as z
+    with container(opts['<output>'], 'w') as z:
         writeKmers(K, xs, z)
 
 if __name__ == '__main__':
