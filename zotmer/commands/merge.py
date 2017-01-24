@@ -3,14 +3,15 @@ Usage:
     zot merge <output> <input>...
 """
 
+import os
+import sys
+
+import docopt
+
 from pykmer.basics import render
 from pykmer.container import container
 from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
-
-import docopt
-import os
-import sys
-import uuid
+from pykmer.file import tmpfile
 
 def pairs(xs):
     i = 0
@@ -126,7 +127,7 @@ def main(argv):
         return
 
     tmps = []
-    tmpnm = '/tmp/' + str(uuid.uuid4()) + '.pmc'
+    tmpnm = tmpfile('.pmc')
     with container(tmpnm, 'w') as z:
         for ix in px:
             if len(ix) == 1:

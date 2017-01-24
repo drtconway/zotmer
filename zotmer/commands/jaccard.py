@@ -2,21 +2,29 @@
 Usage:
     zot jaccard [-abp P] <input>...
 
+Compute Jaccard indexes between k-mer sets. By default, indexes are
+computed only between the first k-mer set and all the remaining
+k-mer sets. If the -a option is given, all pairwise indexes are
+computed.  If the -p P option is given, a Null hypothesis test is
+performed for the hypothesis that the underlying Jaccard Index is
+less than P. This is particularly useful if subsets of k-mers are
+being used (NB, if the k-mer sets are large, the statistics can be
+very expensive to compute).
+
 Options:
     -a          print all pairwise distances
-    -b          brief output - exclude statistical calculations
     -p P        Jaccard distance thresshhold for p-value computation
-                Defaults to 0.95
 """
+
+import array
+import math
+import sys
+
+import docopt
 
 from pykmer.container import container
 from pykmer.container.std import readKmers
 from pykmer.stats import logAdd, logChoose
-
-import array
-import docopt
-import math
-import sys
 
 def jaccard(xs, ys):
     xz = len(xs)
@@ -81,7 +89,7 @@ def main(argv):
     if opts['-a']:
         Z = len(fns)
 
-    p = 0.95
+    p = None
     if opts['-p'] is not None:
         p = float(opts['-p'])
 
@@ -97,7 +105,7 @@ def main(argv):
                         print >> sys.stderr, 'mismatched K:', fns[j]
                         sys.exit(1)
                     (isec, union, d) = jaccard(xs, ys)
-                    if opts['-b']:
+                    if p is None:
                         print '%s\t%s\t%d\t%d\t%d\t%d\t%f' % (fns[i], fns[j], len(xs), len(ys), isec, union, d)
                     else:
                         pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)

@@ -2,6 +2,10 @@
 Usage:
     zot contigs [-l LEN] <input>...
 
+Perform a simple de Bruijn graph assemly of the input k-mers.  Only
+non-branching paths in the de Bruijn graph are reported: no attempt
+is made to resolve branching at all.
+
 Options:
     -l LEN          minimum length of contig to report (default 2K)
 """

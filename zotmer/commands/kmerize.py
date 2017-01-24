@@ -2,9 +2,7 @@
 Usage:
     zot kmerize [-m MEM] [-D FRAC [-S SEED]] <k> <output> <input>...
 
-Kmerize FASTA or FASTQ inputs to produce either a k-mer set or a k-mer
-frequency set. If neither -e nor -s are given, a k-mer frequency set
-is generated.
+Kmerize FASTA or FASTQ inputs to produce a standard container object.
 
 Arguments:
     <k>         the length of the k-mers. Recommended values: 10-30
@@ -15,27 +13,27 @@ Arguments:
                     - mykmers.e25 for an expanded k-mer set of 25-mers
 
 Options:
-    -m MEM      in-memory buffer size
+    -m MEM      in-memory buffer size (in MB)
     -D FRAC     subsample k-mers, using FRAC proportion of k-mers
     -S SEED     if -D is given, give a seed for determining the
                 subspace (defaults to 0).
 """
 
-from pykmer.basics import kmersList, render, sub
-from pykmer.container import container
-from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
-from pykmer.file import openFile, readFasta, readFastqBlock, tmpfile
-from zotmer.library.merge import merge2
-
-from merge import merge
-
-import docopt
 import array
 import gzip
 import os
 import subprocess
 import sys
 import time
+
+import docopt
+
+from pykmer.basics import kmersList, render, sub
+from pykmer.container import container
+from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
+from pykmer.file import openFile, readFasta, readFastqBlock, tmpfile
+
+from zotmer.library.merge import merge2
 
 class KmerAccumulator:
     def __init__(self):

@@ -13,16 +13,16 @@ Options:
                     k-mers.
 """
 
+import array
+import sys
+
+import docopt
+
 from pykmer.basics import ham, lev
 from pykmer.bits import popcnt
+from pykmer.container import container
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
-import pykmer.kset as kset
-import pykmer.kfset as kfset
-
-import array
-import docopt
-import sys
 
 def ksnp(K, xs):
     J = (K - 1) // 2
@@ -138,26 +138,25 @@ def levenshtein(K, d, xs):
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
-    refFn = opts['<ref>']
-    (meta, xs) = kset.read(refFn)
+    with container(opts['<ref>'], 'r') as z:
+        K = z.meta['K']
+        xs = readKmers(z)
 
-    K = meta['K']
+        if opts['-H'] is not None:
+            d = int(opts['-H'])
+            ref = hamming(K, d, xs)
+        elif opts['-L'] is not None:
+            d = int(opts['-L'])
+            ref = levenshtein(K, d, xs)
+        else:
+            ref = ksnp(K, xs)
 
-    if opts['-H'] is not None:
-        d = int(opts['-H'])
-        ref = hamming(K, d, xs)
-    elif opts['-L'] is not None:
-        d = int(opts['-L'])
-        ref = levenshtein(K, d, xs)
-    else:
-        ref = ksnp(K, xs)
-
-    xs = []
-    for ys in ref:
-        xs += ys
+        xs = []
+        for ys in ref:
+            xs += ys
     xs.sort()
-
-    kset.write(K, xs, opts['<output>'])
+    with container(opts['<output>'], 'w') as z
+        writeKmers(K, xs, z)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

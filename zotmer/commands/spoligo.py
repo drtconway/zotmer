@@ -12,17 +12,16 @@ Options:
     -p PROBES   the name of a file containing probe sequences
 """
 
-from pykmer.adaptors import kf2k
+import array
+import sys
+
+import docopt
+
 from pykmer.basics import kmer, render
+from pykmer.container import container
+from pykmer.container.std import readKmers
 from pykmer.misc import uniq
 from pykmer.sparse import sparse
-import pykmer.container as container
-import pykmer.kfset as kfset
-import pykmer.kset as kset
-
-import array
-import docopt
-import sys
 
 def neigh(K, x, d):
     if d == 0:
@@ -190,16 +189,10 @@ def main(argv):
             sys.exit(1)
 
     for inp in opts['<input>']:
-        (m, _) = container.probe(inp)
-        if m['type'] == 'k-mer set':
-            (m, xs) = kset.read(inp)
-            K = m['K']
-        else:
-            (m, xs) = kfset.read(inp)
-            K = m['K']
-            xs = kf2k(xs)
-
-        xs = sparse(2*K, array.array('L', xs))
+        with container(inp, 'r') as z:
+            K = z.meta['K']
+            xs = readKmers(z)
+            xs = sparse(2*K, array.array('L', xs))
 
         res = []
         for i in xrange(len(probes)):

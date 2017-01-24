@@ -9,13 +9,14 @@ Options:
     -S SEED         use the given seed for the sampling
 """
 
+import random
+import sys
+
+import docopt
+
 from pykmer.basics import murmer
 from pykmer.container import container
 from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
-
-import docopt
-import random
-import sys
 
 def sampleR(p, xs, h):
     for x in xs:

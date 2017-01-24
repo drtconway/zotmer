@@ -9,12 +9,13 @@ Options:
     -s          force output to be a k-mer set
 """
 
-from pykmer.container import container
-from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
-
-import docopt
 import math
 import sys
+
+import docopt
+
+from pykmer.container import container
+from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
 
 def sqr(x):
     return x * x
