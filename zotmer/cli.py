@@ -7,15 +7,18 @@ options:
     -V, --version   print version information
 """
 
-import docopt
-import pkgutil
-import os
-import sys
 import importlib
+import os
+import pkgutil
+import sys
+
+import docopt
+
+from pykmer.file import autoremove
 
 import commands
 
-def main():
+def mainInner():
     args = docopt.docopt(__doc__,
                          version='Zotmer k-mer toolkit 0.1',
                          options_first=True)
@@ -48,6 +51,12 @@ def main():
         print >> sys.stderr, "unable to load command `%s', use `zot help` for help." % (args['<command>'], )
         return 1
 
+def main():
+    try:
+        with autoremove():
+            mainInner()
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == '__main__':
     main()
