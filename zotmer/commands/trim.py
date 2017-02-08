@@ -6,7 +6,6 @@ Options:
     -c CUTOFF   discard k-mers with frequency less than CUTOFF. A
                 cutoff of 0 (the default) indicates that cutoff
                 inference should be used.
-    -s          force output to be a k-mer set
 """
 
 import math
