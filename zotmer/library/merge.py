@@ -1,4 +1,4 @@
-import pykmer.container.std as std
+from zotmer.library.files import countsWriter, kmerWriter, readKmersAndCounts, writeKmersAndCounts, writeKmersAndCounts2
 
 def merge2(z, K, xs, ys, h, nm = None):
     if nm is not None:
@@ -8,7 +8,7 @@ def merge2(z, K, xs, ys, h, nm = None):
         knm = None
         cnm = None
 
-    with std.kmerWriter(z, K, knm) as kx, std.countsWriter(z, K, cnm) as cx:
+    with kmerWriter(z, knm) as kx, countsWriter(z, cnm) as cx:
         moreXs = True
         moreYs = True
 
@@ -203,3 +203,36 @@ def merge2Block(z, K, xs, ys, h, nm = None):
         if n > 0:
             kx.append(zBlk)
             cx.append(cBlk)
+
+class _kmerStream(object):
+    def __init__(self, xs):
+        self.more = True
+        self.xs = xs
+        self.x = None
+
+    def next(self):
+        try:
+            self.x = self.xs.next()
+        except StopIteration:
+            self.more = False
+
+    def __lt__(self, other):
+        assert self.more
+        assert other.more
+        return self.x[0] < other.x[0]
+
+def mergeN(xss, hist):
+    ss = [_kmerStream(xs) for xs in xss]
+    q = heap(ss)
+    while len(q) > 0:
+        x = q.front()[0]
+        c = 0
+        while q.front()[0] == x:
+            c += q.front()[1]
+            q.front().next()
+            if q.front().more:
+                q.modifyfront()
+            else:
+                q.pop()
+        hist[c] = 1 + hist.get(c, 0)
+        yield (x, c)

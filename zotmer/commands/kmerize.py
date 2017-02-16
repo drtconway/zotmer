@@ -1,6 +1,6 @@
 """
 Usage:
-    zot kmerize [-m MEM] [-C BAITS] [-D FRAC [-S SEED]] <k> <output> <input>...
+    zot kmerize [-Z] [-m MEM] [-C BAITS] [-D FRAC [-S SEED]] <k> <output> <input>...
 
 Kmerize FASTA or FASTQ inputs to produce a standard container object.
 
@@ -21,20 +21,36 @@ Options:
 """
 
 import array
-import gzip
 import os
-import subprocess
 import sys
 import time
 
 import docopt
 
 from pykmer.basics import kmersList, render, sub
-from pykmer.container import container
-from pykmer.container.std import readKmersAndCounts, readKmersAndCountsBlock, writeKmersAndCounts, writeKmersAndCountsBlock
+from pykmer.container.casket import casket
 from pykmer.file import openFile, readFasta, readFastqBlock, tmpfile
+from pykmer.misc import heap
 
-from zotmer.library.merge import merge2
+from zotmer.library.files import readKmersAndCounts, writeKmersAndCounts, writeKmersAndCounts2
+import zotmer.library.kmers as zotk
+
+def partSort(K, xs):
+    B = 12
+    J = 1 << B
+    M = J - 1
+    S = 2*K - B
+    ps = [[] for i in xrange(J)]
+    for x in xs:
+        i = x >> S
+        ps[i].append(x)
+
+    i = 0
+    for p in ps:
+        p.sort()
+        for y in p:
+            xs[i] = y
+            i += 1
 
 def merge(xs, cs, ys, zs, ss):
 
@@ -128,6 +144,107 @@ def merge(xs, cs, ys, zs, ss):
                 j += 1
         else:
             haveY = False
+
+def merge2(xs, ys, h):
+    moreXs = True
+    try:
+        x = xs.next()
+    except StopIteration:
+        moreXs = False
+    moreYs = True
+    try:
+        y = ys.next()
+    except StopIteration:
+        moreYs = False
+
+    while moreXs and moreYs:
+        if x[0] < y[0]:
+            yield x
+            h[x[1]] = 1 + h.get(x[1], 0)
+            try:
+                x = xs.next()
+            except StopIteration:
+                moreXs = False
+            continue
+        if x[0] > y[0]:
+            yield y
+            h[y[1]] = 1 + h.get(y[1], 0)
+            try:
+                y = ys.next()
+            except StopIteration:
+                moreYs = False
+            continue
+        v = (x[0], x[1] + y[1])
+        yield v
+        h[v[1]] = 1 + h.get(v[1], 0)
+        try:
+            x = xs.next()
+        except StopIteration:
+            moreXs = False
+        try:
+            y = ys.next()
+        except StopIteration:
+            moreYs = False
+
+    while moreXs:
+        yield x
+        h[x[1]] = 1 + h.get(x[1], 0)
+        try:
+            x = xs.next()
+        except StopIteration:
+            moreXs = False
+
+    while moreYs:
+        yield y
+        h[y[1]] = 1 + h.get(y[1], 0)
+        try:
+            y = ys.next()
+        except StopIteration:
+            moreYs = False
+
+class _kmerStream(object):
+    def __init__(self, xs):
+        self.more = True
+        self.xs = xs
+        self.x = None
+        self.next()
+
+    def next(self):
+        try:
+            self.x = self.xs.next()
+        except StopIteration:
+            self.more = False
+
+    def __getitem__(self, i):
+        return self.x[i]
+
+    def __lt__(self, other):
+        assert self.more
+        assert other.more
+        return self.x[0] < other.x[0]
+
+def mergeN(xss, hist):
+    ss = [_kmerStream(xs) for xs in xss]
+    q = heap(ss)
+    while len(q) > 0:
+        v = q.front()
+        x = v.x[0]
+        c = 0
+        n = 0
+        while len(q) > 0 and v.x[0] == x:
+            c += v.x[1]
+            n += 1
+            v.next()
+            if v.more:
+                q.modifyfront()
+                v = q.front()
+            else:
+                q.pop()
+                if len(q) > 0:
+                    v = q.front()
+        hist[c] = 1 + hist.get(c, 0)
+        #print '%s\t%d\t%d' % (render(27, x), c, n)
+        yield (x, c)
 
 class KmerAccumulator:
     def __init__(self):
@@ -225,17 +342,22 @@ class KmerAccumulator2:
             self.flush()
 
     def addList(self, xs):
-        for x in xs:
-            self.z += 1
-
-            self.buf.append(x)
-            self.z0 += 1
+        z0 = len(self.buf)
+        self.buf.extend(xs)
+        z1 = len(self.buf)
+        n = z1 - z0
+        self.z += n
+        self.z0 += n
 
         if self.z0 > len(self.idxX) and self.z0 > 128*1024*1024:
             self.flush()
 
     def flush(self):
-        self.buf.sort()
+        if len(self.buf) == 0:
+            return
+
+        #self.buf.sort()
+        partSort(self.K, self.buf)
         ys = array.array('L', [])
         cs = array.array('I', [])
         merge(self.idxX, self.idxC, self.buf, ys, cs)
@@ -249,14 +371,13 @@ class KmerAccumulator2:
         for i in xrange(len(self.idxX)):
             yield (self.idxX[i], self.idxC[i])
 
-    def kmersBlock(self):
+    def kmersOnly(self):
         self.flush()
-        B = 65536
-        for i in xrange(0, len(self.idxX), B):
-            yield (self.idxX[i:i+B], self.idxC[i:i+B])
+        return self.idxX
 
-    def stat(self, brief=False):
-        pass
+    def countsOnly(self):
+        self.flush()
+        return self.idxC
 
 def pairs(xs):
     i = 0
@@ -352,108 +473,105 @@ def main(argv):
             xs |= set(kmersList(K, seq, True))
         B = xs
 
-    tmpnm = tmpfile('.pmc')
-    with container(tmpnm, 'w') as z:
-        pass
-
     PN = 1024*1024
 
-    nr = 0
-    t0 = time.time()
-    for fn in opts['<input>']:
-        for rds in mkParser(fn):
-            for (nm, seq) in rds:
-                nr += 1
-                if nr & (PN - 1) == 0:
-                    t1 = time.time()
-                    print >> sys.stderr, 'reads processed:', nr, (PN)/(t1 - t0), 'reads/second'
-                    t0 = t1
-                    buf.stat()
-                xs = kmersList(K, seq, True)
-                if d is not None:
+    tmpnm = tmpfile('.pmc')
+    with casket(tmpnm, 'w') as z:
+        nr = 0
+        t0 = time.time()
+        for fn in opts['<input>']:
+            for rds in mkParser(fn):
+                for (nm, seq) in rds:
+                    nr += 1
+                    if nr & (PN - 1) == 0:
+                        t1 = time.time()
+                        print >> sys.stderr, 'reads processed:', nr, (PN)/(t1 - t0), 'reads/second'
+                        t0 = t1
+                    xs = kmersList(K, seq, True)
                     for x in xs:
-                        if x in cacheNo:
-                            continue
-                        if x not in cacheYes:
-                            if not sub(S, d, x):
-                                cacheNo.add(x)
-                                continue
-                            cacheYes.add(x)
-                        buf.add(x)
                         acgt[x&3] += 1
-                        m += 1
-                        n += 1
-                    if len(cacheYes) > 1000000:
-                        cacheYes = set([])
-                    if len(cacheNo) > 1000000:
-                        cacheNo = set([])
-                elif B is not None:
-                    found = False
-                    for x in xs:
-                        if x in B:
-                            found = True
-                            break
-                    if found:
-                        buf.addList(xs)
+                    if d is not None:
                         for x in xs:
-                            acgt[x&3] += 1
+                            if x in cacheNo:
+                                continue
+                            if x not in cacheYes:
+                                if not sub(S, d, x):
+                                    cacheNo.add(x)
+                                    continue
+                                cacheYes.add(x)
+                            buf.add(x)
                             m += 1
                             n += 1
-                else:
-                    buf.addList(xs)
-                    for x in xs:
-                        acgt[x&3] += 1
-                        m += 1
-                        n += 1
-                if (nr % 1023) == 0 and buf.mem() >= Z//2:
-                    fn = 'tmps-%d' % (len(tmps),)
-                    print >> sys.stderr, "writing " + fn + "\t" + tmpnm
-                    tmps.append(fn)
-                    with container(tmpnm, 'a') as z:
-                        writeKmersAndCountsBlock(K, buf.kmersBlock(), z, fn)
-                    buf.clear()
-                    n = 0
+                        if len(cacheYes) > 1000000:
+                            cacheYes = set([])
+                        if len(cacheNo) > 1000000:
+                            cacheNo = set([])
+                    elif B is not None:
+                        found = False
+                        for x in xs:
+                            if x in B:
+                                found = True
+                                break
+                        if found:
+                            buf.addList(xs)
+                            for x in xs:
+                                m += 1
+                                n += 1
+                    else:
+                        buf.addList(xs)
+                        for x in xs:
+                            m += 1
+                            n += 1
+                    if (nr % 1023) == 0 and buf.mem() >= Z//2:
+                        fn = 'tmps-%d' % (len(tmps),)
+                        print >> sys.stderr, "writing " + fn + "\t" + tmpnm
+                        tmps.append(fn)
+                        writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
+                        buf.clear()
+                        n = 0
 
-    t1 = time.time()
-    print >> sys.stderr, 'reads processed:', nr, (nr % PN)/(t1 - t0), 'reads/second'
+        t1 = time.time()
+        print >> sys.stderr, 'reads processed:', nr, (nr % PN)/(t1 - t0), 'reads/second'
 
-    if len(tmps) and len(buf):
-        fn = 'tmps-%d' % (len(tmps),)
-        #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
-        tmps.append(fn)
-        with container(tmpnm, 'a') as z:
-            writeKmersAndCountsBlock(K, buf.kmersBlock(), z, fn)
-        buf = []
+        if len(tmps) and len(buf):
+            fn = 'tmps-%d' % (len(tmps),)
+            #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
+            tmps.append(fn)
+            writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
+            buf = []
 
-    while len(tmps) > 2:
-        tmpnm2 = tmpfile('.pmc')
-        tmps2 = []
-        with container(tmpnm, 'r') as z0, container(tmpnm2, 'w') as z:
-            ps = pairs(tmps)
-            for p in ps:
-                fn = 'tmps-%d' % (len(tmps2),)
-                tmps2.append(fn)
-                if len(p) == 1:
-                    writeKmersAndCountsBlock(K, readKmersAndCountsBlock(z0, p[0]), z, fn)
-                    continue
-                h = {}
-                merge2(z, K, readKmersAndCounts(z0, p[0]), readKmersAndCounts(z0, p[1]), h, fn)
-        os.remove(tmpnm)
-        tmpnm = tmpnm2
-        tmps = tmps2
+    #while len(tmps) > 2:
+    #    tmpnm2 = tmpfile('.pmc')
+    #    tmps2 = []
+    #    with casket(tmpnm, 'r') as z0, casket(tmpnm2, 'w') as z:
+    #        ps = pairs(tmps)
+    #        for p in ps:
+    #            fn = 'tmps-%d' % (len(tmps2),)
+    #            tmps2.append(fn)
+    #            if len(p) == 1:
+    #                writeKmersAndCounts(z, readKmersAndCounts(z0, p[0]), fn)
+    #                continue
+    #            h = {}
+    #            xs = merge2(readKmersAndCounts(z0, p[0]), readKmersAndCounts(z0, p[1]), h)
+    #            writeKmersAndCounts(z, xs, fn)
+    #    os.remove(tmpnm)
+    #    tmpnm = tmpnm2
+    #    tmps = tmps2
 
-    with container(out, 'w') as z:
+    with zotk.kmers(out, 'w') as z:
         h = {}
         if len(tmps) == 0:
-            zs = histBlock(buf.kmersBlock(), h)
-            writeKmersAndCountsBlock(K, zs, z)
+            for c in buf.countsOnly():
+                h[c] = 1 + h.get(c, 0)
+            writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
         elif len(tmps) == 1:
-            with container(tmpnm, 'r') as z0:
-                writeKmersAndCountsBlock(K, histBlock(readKmersAndCountsBlock(z0, tmps[0]), h), z)
+            with casket(tmpnm, 'r') as z0:
+                writeKmersAndCounts(K, readKmersAndCounts(z0, tmps[0]), z)
         else:
-            assert len(tmps) == 2
-            with container(tmpnm, 'r') as z0:
-                merge2(z, K, readKmersAndCounts(z0, tmps[0]), readKmersAndCounts(z0, tmps[1]), h)
+            with casket(tmpnm, 'r') as z0:
+                xss = [readKmersAndCounts(z0, t) for t in tmps]
+                xs = mergeN(xss, h)
+                writeKmersAndCounts(z, xs, fn)
         n = float(sum(acgt))
         acgt = [c/n for c in acgt]
         z.meta['hist'] = h
