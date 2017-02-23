@@ -4,8 +4,8 @@ Usage:
 """
 
 from pykmer.basics import render
-from pykmer.container import container
-from pykmer.container.std import readKmers, readKmersAndCounts
+from zotmer.library.files import readKmers, readKmersAndCounts
+from zotmer.library.kmers import kmers
 
 import docopt
 import sys
@@ -14,7 +14,7 @@ def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     inp = opts['<input>']
-    with container(inp, 'r') as z:
+    with kmers(inp, 'r') as z:
         K = z.meta['K']
         if 'kmers' not in z.meta:
             print >> sys.stderr, 'cannot dump "%s" as it contains no k-mers' % (inp,)

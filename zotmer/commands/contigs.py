@@ -11,10 +11,10 @@ Options:
 """
 
 from pykmer.basics import rc, render
-from pykmer.container import container
-from pykmer.container.std import readKmers
 from pykmer.sparse import sparse
 from pykmer.bitvec import bitvec
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmers
 
 import docopt
 import array
@@ -35,7 +35,7 @@ def main(argv):
         L0 = int(opts['-l'])
 
     for inp in opts['<input>']:
-        with container(inp, 'r') as z:
+        with kmers(inp, 'r') as z:
             K = z.meta['K']
             L = L0
             if L is None:

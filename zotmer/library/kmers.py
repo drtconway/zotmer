@@ -13,7 +13,7 @@ class kmers(casket):
         if mode == 'r':
             f = self.open('__meta__')
             s = f.read()
-            self.meta = json.loads(w)
+            self.meta = json.loads(s)
 
     def close(self):
         if self.mode == 'w':

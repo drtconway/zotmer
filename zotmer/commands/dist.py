@@ -7,9 +7,10 @@ Options:
                 Use "-M list" to get a list of available measures.
 """
 
-import pykmer.kfset as kfset
 import pykmer.dist as dist
 from pykmer.exceptions import MismatchedK
+from zotmer.library.files import readKmers, readKmersAndCounts
+from zotmer.library.kmers import kmers
 
 import array
 import docopt
@@ -26,25 +27,26 @@ class Measure:
         self.func = func
 
     def prep(self, K, fn):
-        (meta, xs) = kfset.read(fn)
-        fK = meta['K']
-        if fK < K:
-            raise MismatchedK(K, fK)
-        if self.vec:
+        with kmers(fn, 'r') as z:
+            fK = z.meta['K']
+            if fK < K:
+                raise MismatchedK(K, fK)
+            xs = readKmers(z)
+            if self.vec:
+                S = 2*(fK - K)
+                v = array.array('I', [0 for i in xrange(1 << (2*K))])
+                for (x, c) in xs:
+                    y = x >> S
+                    v[y] += c
+                return v
+            
             S = 2*(fK - K)
-            v = array.array('I', [0 for i in xrange(1 << (2*K))])
-            for (x, c) in xs:
+            v = array.array('L', [])
+            for x in xs:
                 y = x >> S
-                v[y] += c
+                if len(v) == 0 or v[-1] != y:
+                    v.append(y)
             return v
-        
-        S = 2*(fK - K)
-        v = array.array('L', [])
-        for (x,_) in xs:
-            y = x >> S
-            if len(v) == 0 or v[-1] != y:
-                v.append(y)
-        return v
 
     def measure(self, lhs, rhs):
         return self.func(lhs, rhs, self.vec)

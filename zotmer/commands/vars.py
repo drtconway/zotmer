@@ -8,11 +8,12 @@ Options:
 
 from pykmer.basics import can, fasta, lcp, render
 from pykmer.file import readFasta
-import pykmer.kset as kset
-import pykmer.kfset as kfset
 from pykmer.misc import heap
 from pykmer.stats import logBinGe, logBinLe
 from pykmer.exceptions import MismatchedK
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmersAndCounts
+
 
 import docopt
 import math
@@ -21,11 +22,12 @@ import sys
 def getK(ins):
     k = None
     for fn in ins:
-        k0 = kfset.probeK(fn)
-        if k is None:
-            k = k0
-        elif k != k0:
-            raise MismatchedK(k, k0)
+        with kmers(fn, 'r') as z:
+            k0 = z.meta['K']
+            if k is None:
+                k = k0
+            elif k != k0:
+                raise MismatchedK(k, k0)
     return k
 
 def group(K, J, n, xs):
@@ -81,41 +83,39 @@ def main(argv):
     M = (1 << (2 * (K - J))) - 1
 
     if opts['-r'] is not None:
-        refFn = opts['-r']
-
-        (_, refXs) = kfset.read(refFn)
-        xs = list(group(K, J, 0, refXs))
+        with kmers(opts['-r'], 'r') as z:
+            xs = list(group(K, J, 0, readKmersAndCounts(z)))
 
         for fn in opts['<input>']:
-            (_, samXs) = kfset.read(fn)
-            i = 0
-            for (yCtx, _, yGrp) in group(K, J, 0, samXs):
-                while i < len(xs) and xs[i][0] < yCtx:
+            with kmers(fn, 'r') as z:
+                samXs = readKmersAndCounts(z)
+                i = 0
+                for (yCtx, _, yGrp) in group(K, J, 0, samXs):
+                    while i < len(xs) and xs[i][0] < yCtx:
+                        i += 1
+                    assert i < len(xs)
+                    assert xs[i][0] == yCtx
+                    gt = float(sum([c for (x,c) in xs[i][2]]))
+                    gx = [0 for j in xrange(M+1)]
+                    for (x,c) in xs[i][2]:
+                        gx[x&M] = c
+                    st = sum([c for (x,c) in yGrp])
+                    sx = [0 for j in xrange(M+1)]
+                    for (x,c) in yGrp:
+                        sx[x&M] = c
+                    ss = []
+                    b = 0
+                    for j in xrange(M+1):
+                        p = float(gx[j])/gt
+                        v = 0.0
+                        if 0.0 < p and p < 1.0:
+                            v = logBinGe(p, st, sx[j])
+                            if v < -10:
+                                b |= 1 << j
+                        ss.append('%3.2g' % (v,))
+                    if b > 0:
+                        print '%s\t%s\t%s' % (render(J, yCtx), fasta(b), '\t'.join(ss))
                     i += 1
-                assert i < len(xs)
-                assert xs[i][0] == yCtx
-                gt = float(sum([c for (x,c) in xs[i][2]]))
-                gx = [0 for j in xrange(M+1)]
-                for (x,c) in xs[i][2]:
-                    gx[x&M] = c
-                st = sum([c for (x,c) in yGrp])
-                sx = [0 for j in xrange(M+1)]
-                for (x,c) in yGrp:
-                    sx[x&M] = c
-                ss = []
-                b = 0
-                for j in xrange(M+1):
-                    p = float(gx[j])/gt
-                    v = 0.0
-                    if 0.0 < p and p < 1.0:
-                        v = logBinGe(p, st, sx[j])
-                        if v < -10:
-                            b |= 1 << j
-                    ss.append('%3.2g' % (v,))
-                if b > 0:
-                    print '%s\t%s\t%s' % (render(J, yCtx), fasta(b), '\t'.join(ss))
-                i += 1
-
         return
 
     # Parse files in parallel to get global distribution

@@ -13,6 +13,15 @@ class fileEncoder(codec64.encoder):
     def write(self, w):
         self.f.write(struct.pack('Q', w))
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, t, f, v):
+        self.end()
+        if t is not None:
+            return False
+        return True
+
 class kmerWriter:
     def __init__(self, f):
         self.f = fileEncoder(f)

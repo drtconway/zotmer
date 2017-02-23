@@ -16,9 +16,9 @@ import sys
 
 import docopt
 
-from pykmer.container import container
-from pykmer.container.std import readKmers
 from pykmer.index import buildIndex, index
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmers
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
@@ -35,7 +35,7 @@ def main(argv):
     idx = index(opts['<alleles>'])
 
     for inp in opts['<input>']:
-        with container(inp, 'r') as z:
+        with kmers(inp, 'r') as z:
             K0 = z.meta['K']
             if K0 != idx.K:
                 print >> sys.stderr, 'Input "%d" has different k to index' % (inp,)

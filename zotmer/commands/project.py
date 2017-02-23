@@ -12,8 +12,8 @@ import sys
 
 import docopt
 
-from pykmer.container import container
-from pykmer.container.std import readKmers, writeKmers, readKmersAndCounts, writeKmersAndCounts
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmers, writeKmers, readKmersAndCounts, writeKmersAndCounts
 
 def project1(xs, ys):
     i = 0
@@ -42,18 +42,18 @@ def project2(xs, ys):
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
-    with container(opts['<ref>'], 'r') as z:
+    with kmers(opts['<ref>'], 'r') as z:
         K = z.meta['K']
         xs = array.array('L', readKmers(z))
     Z = len(xs)
 
-    with container(opts['<input>'], 'r') as z0:
+    with kmers(opts['<input>'], 'r') as z0:
         K0 = z0.meta['K']
         if K0 != K:
             print >> sys.stderr, "mismatched K (%d)" % (K0, )
             sys.exit(1)
 
-        with container(opts['<output>'], 'w') as z:
+        with kmers(opts['<output>'], 'w') as z:
             if 'counts' in z0.meta:
                 ys = readKmersAndCounts(z0)
                 writeKmersAndCounts(K, project2(xs, ys), z)

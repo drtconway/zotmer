@@ -6,7 +6,7 @@ Options:
     -u              update the input container to include the histogram
 """
 
-from pykmer.container import container
+from zotmer.library.kmers import kmers
 
 import docopt
 import sys
@@ -15,9 +15,10 @@ def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     for inp in opts['<input>']:
-        with container(inp, 'r') as z:
+        with kmers(inp, 'r') as z:
             if 'hist' in z.meta:
                 h = z.meta['hist'].items()
+                h = [(int(f), c) for (f, c) in h]
                 h.sort()
                 for (f,c) in h:
                     print '%s\t%d\t%d' % (inp, f, c)

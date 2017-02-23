@@ -30,9 +30,10 @@ import docopt
 from pykmer.basics import kmersList, render, sub
 from pykmer.container.casket import casket
 from pykmer.file import openFile, readFasta, readFastqBlock, tmpfile
-from pykmer.misc import heap
+from pykmer.misc import heap, radix_sort
+from pykmer.timer import timer
 
-from zotmer.library.files import readKmersAndCounts, writeKmersAndCounts, writeKmersAndCounts2
+from zotmer.library.files import countsWriter, kmerWriter, readKmersAndCounts, writeKmersAndCounts, writeKmersAndCounts2
 import zotmer.library.kmers as zotk
 
 def partSort(K, xs):
@@ -246,6 +247,77 @@ def mergeN(xss, hist):
         #print '%s\t%d\t%d' % (render(27, x), c, n)
         yield (x, c)
 
+class _kmerRadixBlockStream(object):
+    def __init__(self, K, stream):
+        self.B = 12
+        self.S = 2*K - self.B
+        self.more = True
+        self.stream = stream
+        self.radix = 0
+        self.xs = []
+        self.x = None
+        try:
+            self.x = self.stream.next()
+        except StopIteration:
+            self.more = False
+        self.next()
+
+    def done(self):
+        return len(self.xs) == 0 and not self.more
+
+    def next(self):
+        self.xs = []
+        while self.more and (self.x[0] >> self.S) == self.radix:
+            self.xs.append(self.x)
+            try:
+                self.x = self.stream.next()
+            except StopIteration:
+                self.more = False
+                self.x = None
+                break
+        self.radix += 1
+
+    def __lt__(self, other):
+        return self.radix < other.radix
+
+def mergeNinto(K, xss, hist, z, nm = None):
+    if nm is None:
+        knm = 'kmers'
+        cnm = 'counts'
+    else:
+        knm = nm + '-kmers'
+        cnm = nm + '-counts'
+
+    t = tmpfile()
+    with z.add_stream(knm) as kf, open(t, 'w') as cf:
+        with kmerWriter(kf) as kx, countsWriter(cf) as cx:
+            ss = [_kmerRadixBlockStream(K, xs) for xs in xss]
+            q = heap(ss)
+            while len(q) > 0:
+                v = q.front()
+                r = v.radix
+                ys = {}
+                while len(q) > 0 and v.radix == r:
+                    for (x, c) in v.xs:
+                        ys[x] = c + ys.get(x, 0)
+                    v.next()
+                    if v.done():
+                        q.pop()
+                        if len(q) > 0:
+                            v = q.front()
+                    else:
+                        q.modifyfront()
+                        v = q.front()
+                ys = ys.items()
+                ys.sort()
+                for (x, c) in ys:
+                    hist[c] = 1 + hist.get(c, 0)
+                    #print '%s\t%d\t%d' % (render(27, x), c, n)
+                    kx.append(x)
+                    cx.append(c)
+    z.add_file(cnm, t)
+    os.remove(t)
+
 class KmerAccumulator:
     def __init__(self):
         self.toc = {}
@@ -357,7 +429,7 @@ class KmerAccumulator2:
             return
 
         #self.buf.sort()
-        partSort(self.K, self.buf)
+        radix_sort(2*self.K, self.buf)
         ys = array.array('L', [])
         cs = array.array('I', [])
         merge(self.idxX, self.idxC, self.buf, ys, cs)
@@ -478,15 +550,16 @@ def main(argv):
     tmpnm = tmpfile('.pmc')
     with casket(tmpnm, 'w') as z:
         nr = 0
-        t0 = time.time()
+        wallTimer = timer()
+        idxTimer = timer()
+        writingTimer = timer()
+        writingTimer.pause()
         for fn in opts['<input>']:
             for rds in mkParser(fn):
                 for (nm, seq) in rds:
                     nr += 1
                     if nr & (PN - 1) == 0:
-                        t1 = time.time()
-                        print >> sys.stderr, 'reads processed:', nr, (PN)/(t1 - t0), 'reads/second'
-                        t0 = t1
+                        print >> sys.stderr, 'reads processed:', nr, int(wallTimer.rate(nr)), 'reads/second'
                     xs = kmersList(K, seq, True)
                     for x in xs:
                         acgt[x&3] += 1
@@ -523,61 +596,55 @@ def main(argv):
                             m += 1
                             n += 1
                     if (nr % 1023) == 0 and buf.mem() >= Z//2:
+                        idxTimer.pause()
+                        writingTimer.resume()
+                        writingTimer.tick()
                         fn = 'tmps-%d' % (len(tmps),)
                         print >> sys.stderr, "writing " + fn + "\t" + tmpnm
                         tmps.append(fn)
                         writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
                         buf.clear()
                         n = 0
-
-        t1 = time.time()
-        print >> sys.stderr, 'reads processed:', nr, (nr % PN)/(t1 - t0), 'reads/second'
+                        writingTimer.pause()
+                        idxTimer.resume()
+        idxTimer.pause()
 
         if len(tmps) and len(buf):
+            writingTimer.resume()
+            writingTimer.tick()
             fn = 'tmps-%d' % (len(tmps),)
             #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
             tmps.append(fn)
             writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
             buf = []
-
-    #while len(tmps) > 2:
-    #    tmpnm2 = tmpfile('.pmc')
-    #    tmps2 = []
-    #    with casket(tmpnm, 'r') as z0, casket(tmpnm2, 'w') as z:
-    #        ps = pairs(tmps)
-    #        for p in ps:
-    #            fn = 'tmps-%d' % (len(tmps2),)
-    #            tmps2.append(fn)
-    #            if len(p) == 1:
-    #                writeKmersAndCounts(z, readKmersAndCounts(z0, p[0]), fn)
-    #                continue
-    #            h = {}
-    #            xs = merge2(readKmersAndCounts(z0, p[0]), readKmersAndCounts(z0, p[1]), h)
-    #            writeKmersAndCounts(z, xs, fn)
-    #    os.remove(tmpnm)
-    #    tmpnm = tmpnm2
-    #    tmps = tmps2
+            writingTimer.pause()
 
     with zotk.kmers(out, 'w') as z:
         h = {}
         if len(tmps) == 0:
             for c in buf.countsOnly():
                 h[c] = 1 + h.get(c, 0)
-            writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
+            writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly())
         elif len(tmps) == 1:
             with casket(tmpnm, 'r') as z0:
                 writeKmersAndCounts(K, readKmersAndCounts(z0, tmps[0]), z)
         else:
             with casket(tmpnm, 'r') as z0:
                 xss = [readKmersAndCounts(z0, t) for t in tmps]
-                xs = mergeN(xss, h)
-                writeKmersAndCounts(z, xs, fn)
+                mergeNinto(K, xss, h, z)
         n = float(sum(acgt))
         acgt = [c/n for c in acgt]
+        print h
+        z.meta['K'] = K
+        z.meta['kmers'] = 'kmers'
+        z.meta['counts'] = 'counts'
         z.meta['hist'] = h
         z.meta['acgt'] = acgt
         z.meta['reads'] = nr
     os.remove(tmpnm)
+
+    print >> sys.stderr, 'reads processed:', nr, int(wallTimer.rate(nr)), 'reads/second'
+    print >> sys.stderr, 'reads indexed:', nr, int(idxTimer.rate(nr)), 'reads/second'
 
 if __name__ == '__main__':
     main(sys.argv[1:])

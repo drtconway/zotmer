@@ -20,9 +20,10 @@ import docopt
 
 from pykmer.basics import ham, lev
 from pykmer.bits import popcnt
-from pykmer.container import container
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
+from zotlib.library.kmers import kmers
+from zotlib.library.files import readKmers
 
 def ksnp(K, xs):
     J = (K - 1) // 2
@@ -138,7 +139,7 @@ def levenshtein(K, d, xs):
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
-    with container(opts['<ref>'], 'r') as z:
+    with kmers(opts['<ref>'], 'r') as z:
         K = z.meta['K']
         xs = readKmers(z)
 
@@ -155,8 +156,10 @@ def main(argv):
         for ys in ref:
             xs += ys
     xs.sort()
-    with container(opts['<output>'], 'w') as z:
-        writeKmers(K, xs, z)
+    with kmers(opts['<output>'], 'w') as z:
+        writeKmers(z, xs)
+        z.meta['kmers'] = 'kmers'
+        z.meta['K'] = K
 
 if __name__ == '__main__':
     main(sys.argv[1:])

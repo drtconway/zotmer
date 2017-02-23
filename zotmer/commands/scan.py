@@ -8,19 +8,43 @@ Options:
 """
 
 from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
-from pykmer.container import container
-from pykmer.container.vectors import read64, write64, read32, write32, read32s, write32s
-from pykmer.container.std import readKmers
 from pykmer.file import readFasta
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
 from pykmer.stats import counts2cdf, ksDistance2, log1mexp, logAdd, logChoose, logFac
+from pykmer.container.casket import casket
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmers
 
 import array
 import cPickle
 import docopt
 import math
 import sys
+
+def write64(z, xs, nm):
+    z.add_content(nm, xs.tostring())
+
+def read64(z, nm):
+    a = array.array('L', [])
+    a.fromstring(z.open(nm).read())
+    return a
+
+def write32(z, xs, nm):
+    z.add_content(nm, xs.tostring())
+
+def read32(z, nm):
+    a = array.array('I', [])
+    a.fromstring(z.open(nm).read())
+    return a
+
+def write32s(z, xs, nm):
+    z.add_content(nm, xs.tostring())
+
+def read32s(z, nm):
+    a = array.array('i', [])
+    a.fromstring(z.open(nm).read())
+    return a
 
 def lev(x, y):
     zx = len(x)
@@ -202,15 +226,11 @@ def main(argv):
         del tmp
 
         gfn = opts['<genes>']
-        with container(gfn, 'w') as z:
+        with casket(gfn, 'w') as z:
             z.meta['K'] = K
-            z.meta['S'] = S.count()
             write64(z, S.xs, 'S')
-            z.meta['T'] = len(T)
             write64(z, T, 'T')
-            z.meta['U'] = len(U)
             write32(z, U, 'U')
-            z.meta['V'] = len(V)
             write32s(z, V, 'V')
             z.meta['lens'] = lens
             z.meta['qacgt'] = qacgt
@@ -222,13 +242,13 @@ def main(argv):
     print >> sys.stderr, "loading..."
 
     gfn = opts['<genes>']
-    with container(gfn, 'r') as z:
+    with casket(gfn, 'r') as z:
         K = z.meta['K']
-        S = array.array('L', read64(z, 'S', z.meta['S']))
+        S = read64(z, 'S')
         S = sparse(2*K, S)
-        T = array.array('L', read64(z, 'T', z.meta['T']))
-        U = array.array('I', read32(z, 'U', z.meta['U']))
-        V = array.array('i', read32s(z, 'V', z.meta['V']))
+        T = read64(z, 'T')
+        U = read32(z, 'U')
+        V = read32s(z, 'V')
         lens = z.meta['lens']
         qacgt = z.meta['qacgt']
         nms = z.meta['nms']
@@ -239,7 +259,7 @@ def main(argv):
     for fn in opts['<input>']:
         L = array.array('B', [0 for i in xrange(S.count())])
         Y = array.array('L', [0 for i in xrange(S.count())])
-        with container(fn, 'r') as z:
+        with kmers(fn, 'r') as z:
             sacgt = z.meta['acgt']
             xs = readKmers(z)
             X = array.array('L', xs)

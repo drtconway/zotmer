@@ -15,8 +15,8 @@ import sys
 import docopt
 
 from pykmer.basics import murmer
-from pykmer.container import container
-from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmersAndCounts, writeKmersAndCounts
 
 def sampleR(p, xs, h):
     for x in xs:
@@ -41,9 +41,9 @@ def main(argv):
         p = float(opts['-P'])
     inp = opts['<input>']
     out = opts['<output>']
-    with container(out, 'w') as z:
+    with kmers(out, 'w') as z:
         h = {}
-        with container(inp, 'r') as z0:
+        with kmers(inp, 'r') as z0:
             K = z0.meta['K']
             z.meta = z0.meta.copy()
             del z.meta['kmers']

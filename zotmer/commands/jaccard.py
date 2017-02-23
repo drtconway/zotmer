@@ -22,9 +22,9 @@ import sys
 
 import docopt
 
-from pykmer.container import container
-from pykmer.container.std import readKmers
 from pykmer.stats import logAdd, logChoose
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmers
 
 def jaccard(xs, ys):
     xz = len(xs)
@@ -94,11 +94,11 @@ def main(argv):
         p = float(opts['-p'])
 
     for i in xrange(Z):
-        with container(fns[i], 'r') as z0:
+        with kmers(fns[i], 'r') as z0:
             xK = z0.meta['K']
             xs = array.array('L', readKmers(z0))
             for j in xrange(i + 1, len(fns)):
-                with container(fns[j], 'r') as z1:
+                with kmers(fns[j], 'r') as z1:
                     yK = z1.meta['K']
                     ys = array.array('L', readKmers(z1))
                     if xK != yK:

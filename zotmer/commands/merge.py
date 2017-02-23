@@ -9,9 +9,9 @@ import sys
 import docopt
 
 from pykmer.basics import render
-from pykmer.container import container
-from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
 from pykmer.file import tmpfile
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmersAndCounts, writeKmersAndCounts
 
 def pairs(xs):
     i = 0
@@ -98,21 +98,21 @@ def main(argv):
 
     px = list(pairs(opts['<input>']))
     if len(px) == 1:
-        with container(out, 'w') as z:
+        with kmers(out, 'w') as z:
             h = {}
             acgt = [0, 0, 0, 0]
             ix = px[0]
             if len(ix) == 1:
-                with container(ix[0], 'r') as z0:
+                with kmers(ix[0], 'r') as z0:
                     K = z0.meta['K']
                     xs = readKmersAndCounts(z0)
                     zs = hist(xs, h, acgt)
                     writeKmersAndCounts(K, xs, z)
             else:
-                with container(ix[0], 'r') as z0:
+                with kmers(ix[0], 'r') as z0:
                     K = z0.meta['K']
                     xs = readKmersAndCounts(z0)
-                    with container(ix[1], 'r') as z1:
+                    with kmers(ix[1], 'r') as z1:
                         K1 = z1.meta['K']
                         if K1 != K:
                             print >> sys.stderr, "mismatched K"
@@ -128,12 +128,12 @@ def main(argv):
 
     tmps = []
     tmpnm = tmpfile('.pmc')
-    with container(tmpnm, 'w') as z:
+    with kmers(tmpnm, 'w') as z:
         for ix in px:
             if len(ix) == 1:
                 nm = 'tmp-' + str(len(tmps))
                 tmps.append(nm)
-                with container(ix[0], 'r') as z0:
+                with kmers(ix[0], 'r') as z0:
                     if K is None:
                         K = z0.meta['K']
                     else:
@@ -146,7 +146,7 @@ def main(argv):
             else:
                 nm = 'tmp-' + str(len(tmps))
                 tmps.append(nm)
-                with container(ix[0], 'r') as z0:
+                with kmers(ix[0], 'r') as z0:
                     if K is None:
                         K = z0.meta['K']
                     else:
@@ -155,7 +155,7 @@ def main(argv):
                             print >> sys.stderr, "mismatched K"
                             sys.exit(1)
                     xs = readKmersAndCounts(z0)
-                    with container(ix[1], 'r') as z1:
+                    with kmers(ix[1], 'r') as z1:
                         K1 = z1.meta['K']
                         if K1 != K:
                             print >> sys.stderr, "mismatched K"
@@ -165,10 +165,10 @@ def main(argv):
 
     assert K is not None
 
-    with container(out, 'w') as z:
+    with kmers(out, 'w') as z:
         h = {}
         acgt = [0, 0, 0, 0]
-        with container(tmpnm, 'r') as z0:
+        with kmers(tmpnm, 'r') as z0:
             zs = None
             for fn in tmps:
                 xs = readKmersAndCounts(z0, fn)

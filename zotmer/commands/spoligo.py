@@ -18,10 +18,10 @@ import sys
 import docopt
 
 from pykmer.basics import kmer, render
-from pykmer.container import container
-from pykmer.container.std import readKmers
 from pykmer.misc import uniq
 from pykmer.sparse import sparse
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmers
 
 def neigh(K, x, d):
     if d == 0:
@@ -189,7 +189,7 @@ def main(argv):
             sys.exit(1)
 
     for inp in opts['<input>']:
-        with container(inp, 'r') as z:
+        with kmers(inp, 'r') as z:
             K = z.meta['K']
             xs = readKmers(z)
             xs = sparse(2*K, array.array('L', xs))

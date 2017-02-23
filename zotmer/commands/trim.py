@@ -13,8 +13,8 @@ import sys
 
 import docopt
 
-from pykmer.container import container
-from pykmer.container.std import readKmersAndCounts, writeKmersAndCounts
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmersAndCounts, writeKmersAndCounts
 
 def sqr(x):
     return x * x
@@ -62,14 +62,14 @@ def main(argv):
     if opts['-c'] is not None:
         c = int(opts['-c'])
 
-    with container(inp, 'r') as z:
+    with kmers(inp, 'r') as z:
         K = z.meta['K']
         h = z.meta['hist']
         if c == 0:
             c = infer(K, h)
             print >> sys.stderr, 'inferred cutoff:', c
         xs = readKmersAndCounts(z)
-        with container(out, 'w') as w:
+        with kmers(out, 'w') as w:
             w.meta = z.meta.copy()
             del w.meta['kmers']
             del w.meta['counts']
