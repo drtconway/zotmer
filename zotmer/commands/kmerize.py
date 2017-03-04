@@ -244,7 +244,6 @@ def mergeN(xss, hist):
                 if len(q) > 0:
                     v = q.front()
         hist[c] = 1 + hist.get(c, 0)
-        #print '%s\t%d\t%d' % (render(27, x), c, n)
         yield (x, c)
 
 class _kmerRadixBlockStream(object):
@@ -312,7 +311,6 @@ def mergeNinto(K, xss, hist, z, nm = None):
                 ys.sort()
                 for (x, c) in ys:
                     hist[c] = 1 + hist.get(c, 0)
-                    #print '%s\t%d\t%d' % (render(27, x), c, n)
                     kx.append(x)
                     cx.append(c)
     z.add_file(cnm, t)
@@ -600,7 +598,7 @@ def main(argv):
                         writingTimer.resume()
                         writingTimer.tick()
                         fn = 'tmps-%d' % (len(tmps),)
-                        print >> sys.stderr, "writing " + fn + "\t" + tmpnm
+                        #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
                         tmps.append(fn)
                         writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
                         buf.clear()
@@ -613,7 +611,7 @@ def main(argv):
             writingTimer.resume()
             writingTimer.tick()
             fn = 'tmps-%d' % (len(tmps),)
-            #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
+            ##print >> sys.stderr, "writing " + fn + "\t" + tmpnm
             tmps.append(fn)
             writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
             buf = []
@@ -634,7 +632,6 @@ def main(argv):
                 mergeNinto(K, xss, h, z)
         n = float(sum(acgt))
         acgt = [c/n for c in acgt]
-        print h
         z.meta['K'] = K
         z.meta['kmers'] = 'kmers'
         z.meta['counts'] = 'counts'

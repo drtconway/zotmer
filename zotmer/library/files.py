@@ -101,7 +101,6 @@ def writeVector(z, xs, nm):
         writeWords(f, ws)
 
 def readVector(z, nm):
-    print nm
     f = z.open(nm)
     ws = readWords(f)
     for x in codec64.decode(ws):
