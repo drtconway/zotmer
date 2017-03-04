@@ -625,7 +625,7 @@ def main(argv):
             writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly())
         elif len(tmps) == 1:
             with casket(tmpnm, 'r') as z0:
-                writeKmersAndCounts(K, readKmersAndCounts(z0, tmps[0]), z)
+                writeKmersAndCounts(z, readKmersAndCounts(z0, tmps[0]))
         else:
             with casket(tmpnm, 'r') as z0:
                 xss = [readKmersAndCounts(z0, t) for t in tmps]

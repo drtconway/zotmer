@@ -115,7 +115,7 @@ def readDeltas(z, nm):
 def writeKmers(z, xs, nm = 'kmers'):
     return writeDeltas(z, xs, nm)
 
-def readKmers(z, nm = 'counts'):
+def readKmers(z, nm = 'kmers'):
     return readDeltas(z, nm)
 
 def writeCounts(z, xs, nm = 'counts'):
