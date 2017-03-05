@@ -95,6 +95,12 @@ def undelta(ds):
         x += d
         yield x
 
+def undeltaList(ds):
+    x = 0
+    for i in xrange(len(ds)):
+        x += ds[i]
+        ds[i] = x
+
 def writeVector(z, xs, nm):
     with z.add_stream(nm) as f:
         ws = codec64.encode(xs)
@@ -106,14 +112,30 @@ def readVector(z, nm):
     for x in codec64.decode(ws):
         yield x
 
+def readVectorList(z, nm):
+    f = z.open(nm)
+    ws = readWords(f)
+    xs = []
+    for x in codec64.decode(ws):
+        xs.append(x)
+    return xs
+
 def writeDeltas(z, xs, nm):
     return writeVector(z, delta(xs), nm)
 
 def readDeltas(z, nm):
     return undelta(readVector(z, nm))
 
+def readDeltasList(z, nm):
+    xs = readVectorList(z, nm)
+    undeltaList(xs)
+    return xs
+
 def writeKmers(z, xs, nm = 'kmers'):
     return writeDeltas(z, xs, nm)
+
+def readKmersList(z, nm = 'kmers'):
+    return readDeltasList(z, nm)
 
 def readKmers(z, nm = 'kmers'):
     return readDeltas(z, nm)
@@ -123,6 +145,9 @@ def writeCounts(z, xs, nm = 'counts'):
 
 def readCounts(z, nm = 'counts'):
     return readVector(z, nm)
+
+def readCountsList(z, nm = 'counts'):
+    return readVectorList(z, nm)
 
 def demuxKmersAndCounts(xs, f):
     cs = fileEncoder(f)
