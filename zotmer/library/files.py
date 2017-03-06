@@ -89,6 +89,14 @@ def delta(xs):
         yield d
         p = x
 
+def deltaList(xs):
+    p = 0
+    for i in xrange(len(xs)):
+        x = xs[i]
+        d = x - p
+        xs[i] = d
+        p = x
+
 def undelta(ds):
     x = 0
     for d in ds:
@@ -115,10 +123,11 @@ def readVector(z, nm):
 def readVectorList(z, nm):
     f = z.open(nm)
     ws = readWords(f)
-    xs = []
-    for x in codec64.decode(ws):
-        xs.append(x)
-    return xs
+    return codec64.decodeList(ws)
+
+def writeDeltasList(z, xs, nm):
+    deltaList(xs)
+    return writeVector(z, xs, nm)
 
 def writeDeltas(z, xs, nm):
     return writeVector(z, delta(xs), nm)
@@ -133,6 +142,9 @@ def readDeltasList(z, nm):
 
 def writeKmers(z, xs, nm = 'kmers'):
     return writeDeltas(z, xs, nm)
+
+def writeKmersList(z, xs, nm = 'kmers'):
+    return writeDeltasList(z, xs, nm)
 
 def readKmersList(z, nm = 'kmers'):
     return readDeltasList(z, nm)
@@ -201,7 +213,7 @@ def writeKmersAndCounts2(z, xs, cs, nm = None):
     else:
         xNm = nm + '-kmers'
         cNm = nm + '-counts'
-    writeKmers(z, xs, xNm)
+    writeKmersList(z, xs, xNm)
     writeCounts(z, cs, cNm)
 
 def readKmersAndCounts(z, nm = None):
