@@ -1,6 +1,6 @@
 """
 Usage:
-    zot trim [-sc CUTOFF] <output> <input>
+    zot trim [-c CUTOFF] <output> <input>
 
 Options:
     -c CUTOFF   discard k-mers with frequency less than CUTOFF. A
@@ -73,7 +73,11 @@ def main(argv):
             w.meta = z.meta.copy()
             del w.meta['kmers']
             del w.meta['counts']
-            writeKmersAndCounts(K, trim(xs, c), w)
+            writeKmersAndCounts(w, trim(xs, c))
+            w.meta['K'] = K
+            w.meta['kmers'] = 'kmers'
+            w.meta['counts'] = 'counts'
+            w.meta['hist'] = h
 
 if __name__ == '__main__':
     main(sys.argv[1:])
