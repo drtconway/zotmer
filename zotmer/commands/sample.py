@@ -49,16 +49,19 @@ def main(argv):
             del z.meta['kmers']
             del z.meta['counts']
             xs = readKmersAndCounts(z0)
+            S = 0
             if opts['-D'] is None:
-                if opts['-S'] is not None:
+                if opts['-S']:
                     S = long(opts['-S'])
                     random.seed(S)
-                    writeKmersAndCounts(K, sampleR(p, xs, h), z)
+                writeKmersAndCounts(z, sampleR(p, xs, h))
             else:
-                S = 0
-                if opts['-S'] is not None:
+                if opts['-S']:
                     S = long(opts['-S'])
-                    writeKmersAndCounts(K, sampleD(p, S, xs, h), z)
+                writeKmersAndCounts(z, sampleD(p, S, xs, h))
+        z.meta['K'] = K
+        z.meta['kmers'] = 'kmers'
+        z.meta['counts'] = 'counts'
         z.meta['hist'] = h
 
 if __name__ == '__main__':
