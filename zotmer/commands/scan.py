@@ -17,7 +17,7 @@ from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmers
 
 import array
-import cPickle
+import json
 import docopt
 import math
 import sys
@@ -194,7 +194,7 @@ def main(argv):
         S.sort()
         qacgt = [float(c)/float(N) for c in qacgt]
         S = sparse(2*K, array.array('L', uniq(S)))
-        lens = array.array('I', [])
+        lens = []
         nms = []
         seqs = []
         n = 0
@@ -227,15 +227,18 @@ def main(argv):
 
         gfn = opts['<genes>']
         with casket(gfn, 'w') as z:
-            z.meta['K'] = K
+            meta = {}
+            meta['K'] = K
+            meta['lens'] = lens
+            meta['qacgt'] = qacgt
+            meta['nms'] = nms
+            meta['seqs'] = seqs
+
+            z.add_content('__meta__', json.dumps(meta))
             write64(z, S.xs, 'S')
-            write64(z, T, 'T')
+            write32(z, T, 'T')
             write32(z, U, 'U')
             write32s(z, V, 'V')
-            z.meta['lens'] = lens
-            z.meta['qacgt'] = qacgt
-            z.meta['nms'] = nms
-            z.meta['seqs'] = seqs
 
         return
 
@@ -243,16 +246,19 @@ def main(argv):
 
     gfn = opts['<genes>']
     with casket(gfn, 'r') as z:
-        K = z.meta['K']
+        mf = z.open('__meta__')
+        meta = json.load(mf)
+        K = meta['K']
+        lens = meta['lens']
+        qacgt = meta['qacgt']
+        nms = meta['nms']
+        seqs = meta['seqs']
+
         S = read64(z, 'S')
         S = sparse(2*K, S)
-        T = read64(z, 'T')
+        T = read32(z, 'T')
         U = read32(z, 'U')
         V = read32s(z, 'V')
-        lens = z.meta['lens']
-        qacgt = z.meta['qacgt']
-        nms = z.meta['nms']
-        seqs = z.meta['seqs']
 
     print >> sys.stderr, "done."
 

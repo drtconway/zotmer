@@ -22,6 +22,8 @@ import sys
 
 import docopt
 
+import pykmer.basics as basics
+from pykmer.file import openFile, readFasta
 from pykmer.stats import logAdd, logChoose
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmers
@@ -80,18 +82,68 @@ def quantBeta(q, m, n):
             h = x
     return l
 
+def stripCompressionSuffix(nm):
+    if nm.endswith('.gz'):
+        return nm[:-3]
+    return nm
+
+def isFasta(nm):
+    bnm = stripCompressionSuffix(nm)
+    if bnm.endswith(".fa"):
+        return True
+    if bnm.endswith(".fasta"):
+        return True
+    if bnm.endswith(".fas"):
+        return True
+    if bnm.endswith(".fna"):
+        return True
+
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     fns = opts['<input>']
 
-    Z = 1
-    if opts['-a']:
-        Z = len(fns)
-
     p = None
     if opts['-p'] is not None:
         p = float(opts['-p'])
+
+    if len(fns) == 1 and isFasta(fns[0]):
+        K = 25
+        seqs = []
+        with openFile(fns[0]) as f:
+            for (nm, seq) in readFasta(f):
+                xs = set(basics.kmers(K, seq, True))
+                xs = list(xs)
+                xs.sort()
+                xs = array.array('L', xs)
+                seqs.append((nm.split()[0], xs))
+        Z = 1
+        if opts['-a']:
+            Z = len(seqs)
+
+        print len(seqs)
+
+        for i in xrange(Z):
+            xnm = seqs[i][0]
+            xs = seqs[i][1]
+            for j in xrange(i + 1, len(seqs)):
+                ynm = seqs[j][0]
+                ys = seqs[j][1]
+                (isec, union, d) = jaccard(xs, ys)
+                if p is None:
+                    print '%s\t%s\t%d\t%d\t%d\t%d\t%f' % (xnm, ynm, len(xs), len(ys), isec, union, d)
+                else:
+                    pv = logIx(p, isec+1, (union - isec) + 1) / math.log(10)
+                    q05 = quantBeta(0.05, isec+1, (union - isec) + 1)
+                    q95 = quantBeta(0.95, isec+1, (union - isec) + 1)
+                    print '%s\t%s\t%d\t%d\t%d\t%d\t%f\t-%f\t+%f\t%f' % (xnm, ynm, len(xs), len(ys), isec, union, d, d - q05, q95 - d, pv)
+                sys.stdout.flush()
+
+        return
+
+    Z = 1
+    if opts['-a']:
+        Z = len(fns)
 
     for i in xrange(Z):
         with kmers(fns[i], 'r') as z0:
