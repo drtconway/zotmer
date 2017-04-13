@@ -244,6 +244,9 @@ def main(argv):
             mergeNinto(K, xss, h, acgt, z)
         n = float(sum(acgt))
         acgt = [c/n for c in acgt]
+        z.meta['K'] = K
+        z.meta['kmers'] = 'kmers'
+        z.meta['counts'] = 'counts'
         z.meta['hist'] = h
         z.meta['acgt'] = acgt
 

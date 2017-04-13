@@ -54,12 +54,17 @@ def main(argv):
             sys.exit(1)
 
         with kmers(opts['<output>'], 'w') as z:
+            z.meta['K'] = K
             if 'counts' in z0.meta:
                 ys = readKmersAndCounts(z0)
-                writeKmersAndCounts(K, project2(xs, ys), z)
+                writeKmersAndCounts(z, project2(xs, ys))
+                z.meta['kmers'] = 'kmers'
+                z.meta['counts'] = 'counts'
             else:
                 ys = readKmers(z0)
-                writeKmers(K, project1(xs, ys), z)
+                writeKmers(z, project1(xs, ys))
+                z.meta['kmers'] = 'kmers'
+            z.meta['hist'] = z0.meta['hist']
 
 if __name__ == '__main__':
     main(sys.argv[1:])
