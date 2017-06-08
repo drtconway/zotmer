@@ -117,17 +117,10 @@ def main(argv):
                         mutYs = list(mutXs - wtXs)
                         mutYs.sort()
 
-                        ctx = seq[p - W:p + W]
-                        ctxXs = set(kmersList(K, ctx, True))
-                        ctxYs = ctxXs - (set(wtYs) | set(mutYs))
-                        ctxYs = list(ctxYs)
-                        ctxYs.sort()
-
                         r = {}
                         r['hgvs'] = v['hgvs']
                         r['pos'] = [render(K, y) for y in mutYs]
                         r['neg'] = [render(K, y) for y in wtYs]
-                        r['ctx'] = [render(K, y) for y in ctxYs]
                         rs.append(r)
         with open(opts['<index>'], 'w') as f:
             yaml.safe_dump(rs, f)
@@ -140,15 +133,12 @@ def main(argv):
     posRes = {}
     negIdx = {}
     negRes = {}
-    ctxIdx = {}
-    ctxRes = {}
     hs = []
     for itm in itms:
         h = itm['hgvs']
         hs.append(h)
         posRes[h] = {}
         negRes[h] = {}
-        ctxRes[h] = {}
         for x in itm['pos']:
             y = kmer(x)
             if y not in posIdx:
@@ -161,12 +151,6 @@ def main(argv):
                 negIdx[y] = []
             negIdx[y].append(h)
             negRes[h][y] = 0
-        for x in itm['ctx']:
-            y = kmer(x)
-            if y not in ctxIdx:
-                ctxIdx[y] = []
-            ctxIdx[y].append(h)
-            ctxRes[h][y] = 0
     hs.sort()
 
     if opts['-t']:
@@ -181,34 +165,66 @@ def main(argv):
                     if x in negIdx:
                         for h in negIdx[x]:
                             negRes[h][x] += c
-                    if x in ctxIdx:
-                        for h in ctxIdx[x]:
-                            ctxRes[h][x] += c
         for (h, xs) in posRes.items():
             for (x, c) in xs.items():
                 print '%s\tpos\t%s\t%d' % (h, render(K, x), c)
         for (h, xs) in negRes.items():
             for (x, c) in xs.items():
                 print '%s\tneg\t%s\t%d' % (h, render(K, x), c)
-        for (h, xs) in ctxRes.items():
-            for (x, c) in xs.items():
-                print '%s\tctx\t%s\t%d' % (h, render(K, x), c)
         return
 
-    for (fn1, fn2) in pairs(opts['<input>']):
-        with openFile(fn1) as f1, openFile(fn2) as f2:
-            for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
-                xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
-                hits = set([])
-                for x in xs:
-                    if x in posIdx:
-                        for h in posIdx[x]:
-                            posRes[h][x] += 1
-                            hits.add(h)
-                    if x in negIdx:
-                        for h in negIdx[x]:
-                            negRes[h][x] += 1
-                            hits.add(h)
+    if True:
+        for (fn1, fn2) in pairs(opts['<input>']):
+            with openFile(fn1) as f1, openFile(fn2) as f2:
+                for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
+                    xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
+                    for x in xs:
+                        if x in posIdx:
+                            for h in posIdx[x]:
+                                posRes[h][x] += 1
+                        if x in negIdx:
+                            for h in negIdx[x]:
+                                negRes[h][x] += 1
+
+    if False:
+        kx = {}
+        for (fn1, fn2) in pairs(opts['<input>']):
+            with openFile(fn1) as f1, openFile(fn2) as f2:
+                for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
+                    xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
+                    for x in xs:
+                        if x not in kx:
+                            kx[x] = 0
+                        kx[x] += 1
+
+        for (x, c) in kx.iteritems():
+            d = K+1
+            zp = []
+            zn = []
+            for y in posIdx.keys():
+                d0 = ham(x, y)
+                if d0 < d:
+                    zp = []
+                    zn = []
+                    d = d0
+                if d0 == d:
+                    zp.append(y)
+            for y in negIdx.keys():
+                d0 = ham(x, y)
+                if d0 < d:
+                    zp = []
+                    zn = []
+                    d = d0
+                if d0 == d:
+                    zn.append(y)
+            if d >= 3:
+                continue
+            for z in zp:
+                for h in posIdx[z]:
+                    posRes[h][z] += c
+            for z in zn:
+                for h in negIdx[z]:
+                    negRes[h][z] += c
 
     for (h, xs) in posRes.items():
         for (x, c) in xs.items():
