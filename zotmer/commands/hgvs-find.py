@@ -7,23 +7,73 @@ Usage:
 
 Options:
     -X              index HGVS variants
-    -t              test the index for aliasing
     -f FILENAME     read variants from a file
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -w WIDTH        context width [default: 1000]
 """
 
+import math
 import sys
 
 import docopt
+import sortedcontainers
 import yaml
 
-from pykmer.basics import fasta, ham, kmer, kmersList, render
+from pykmer.basics import fasta, ham, kmer, kmersList, murmer, render
 from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts
+
+def lcp(xs):
+    z = xs[0]
+    for x in xs[1:]:
+        i = 0
+        while i < len(z) and i < len(x) and x[i] == z[i]:
+            i += 1
+        z = z[:i]
+    return z
+
+def mkRnks(xs):
+    zs = {}
+    for x in xs:
+        if x not in zs:
+            zs[x] = 0
+        zs[x] += 1
+    zs = zs.items()
+    zs.sort()
+
+    rs = {}
+    n = 1
+    for (z, c) in zs:
+        r = n + (c - 1.0) / 2.0
+        rs[z] = r
+        n += c
+    return rs
+
+def mannWhitney(xs, ys):
+    rs = mkRnks(xs + ys)
+
+    nx = len(xs)
+    ny = len(ys)
+
+    rx = sum([rs[x] for x in xs])
+    #ry = sum([rs[y] for y in ys])
+
+    ux = rx - nx * (ny + 1) / 2.0
+    #uy = ry - ny * (nx + 1) / 2.0
+
+    mu = nx * ny / 2.0
+    sd = math.sqrt(nx*ny*(nx + ny + 1)/12.0)
+
+    zx = (ux - mu) / sd
+    #zy = (uy - mu) / sd
+
+    px = 0.5*math.erfc(zx/math.sqrt(2))
+    #py = 0.5*math.erfc(zy/math.sqrt(2))
+
+    return (ux, zx, px)
 
 def pairs(xs):
     assert len(xs) & 1 == 0
@@ -133,10 +183,10 @@ def main(argv):
     posRes = {}
     negIdx = {}
     negRes = {}
-    hs = []
+    hs = set([])
     for itm in itms:
         h = itm['hgvs']
-        hs.append(h)
+        hs.add(h)
         posRes[h] = {}
         negRes[h] = {}
         for x in itm['pos']:
@@ -151,91 +201,40 @@ def main(argv):
                 negIdx[y] = []
             negIdx[y].append(h)
             negRes[h][y] = 0
-    hs.sort()
 
-    if opts['-t']:
-        for fn in opts['<input>']:
-            print >> sys.stderr, fn
-            with kmers(fn, 'r') as z:
-                xs = readKmersAndCounts(z)
-                for (x, c) in xs:
-                    if x in posIdx:
-                        for h in posIdx[x]:
-                            posRes[h][x] += c
-                    if x in negIdx:
-                        for h in negIdx[x]:
-                            negRes[h][x] += c
-        for (h, xs) in posRes.items():
-            for (x, c) in xs.items():
-                print '%s\tpos\t%s\t%d' % (h, render(K, x), c)
-        for (h, xs) in negRes.items():
-            for (x, c) in xs.items():
-                print '%s\tneg\t%s\t%d' % (h, render(K, x), c)
-        return
+    kx = {}
+    for (fn1, fn2) in pairs(opts['<input>']):
+        with openFile(fn1) as f1, openFile(fn2) as f2:
+            for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
+                xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
+                for x in xs:
+                    if x not in kx:
+                        kx[x] = 0
+                    kx[x] += 1
 
-    if True:
-        for (fn1, fn2) in pairs(opts['<input>']):
-            with openFile(fn1) as f1, openFile(fn2) as f2:
-                for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
-                    xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
-                    for x in xs:
-                        if x in posIdx:
-                            for h in posIdx[x]:
-                                posRes[h][x] += 1
-                        if x in negIdx:
-                            for h in negIdx[x]:
-                                negRes[h][x] += 1
-
-    if False:
-        kx = {}
-        for (fn1, fn2) in pairs(opts['<input>']):
-            with openFile(fn1) as f1, openFile(fn2) as f2:
-                for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
-                    xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
-                    for x in xs:
-                        if x not in kx:
-                            kx[x] = 0
-                        kx[x] += 1
-
+    for s in range(17, 17+100):
+        print >> sys.stderr, "s = %d" % (s,)
+        hx = sortedcontainers.SortedDict()
         for (x, c) in kx.iteritems():
-            d = K+1
-            zp = []
-            zn = []
-            for y in posIdx.keys():
-                d0 = ham(x, y)
-                if d0 < d:
-                    zp = []
-                    zn = []
-                    d = d0
-                if d0 == d:
-                    zp.append(y)
-            for y in negIdx.keys():
-                d0 = ham(x, y)
-                if d0 < d:
-                    zp = []
-                    zn = []
-                    d = d0
-                if d0 == d:
-                    zn.append(y)
-            if d >= 3:
-                continue
-            for z in zp:
-                for h in posIdx[z]:
-                    posRes[h][z] += c
-            for z in zn:
-                for h in negIdx[z]:
-                    negRes[h][z] += c
+            v = murmer(x, s)
+            hx[v] = (x,c)
+            while len(hx) > 2*K:
+                hx.popitem()
+            if x in posIdx:
+                for h in posIdx[x]:
+                    posRes[h][x] = c
+            if x in negIdx:
+                for h in negIdx[x]:
+                    negRes[h][x] = c
+        zs = [c for (_x, c) in hx.values()]
 
-    for (h, xs) in posRes.items():
-        for (x, c) in xs.items():
-            #if c == 0:
-            #    continue
-            print '%s\tpos\t%s\t%d' % (h, render(K, x), c)
-    for (h, xs) in negRes.items():
-        for (x, c) in xs.items():
-            #if c == 0:
-            #    continue
-            print '%s\tneg\t%s\t%d' % (h, render(K, x), c)
+        for h in hs:
+            xs = posRes[h].values()
+            ys = negRes[h].values()
+            (posU, posZ, posP) = mannWhitney(xs, zs)
+            (negU, negZ, negP) = mannWhitney(ys, zs)
+            print '%d\t%s\t%s\t%g\t%g\t%g\t%g\t%g\t%g' % (s, lcp(opts['<input>']), h, posU, negU, posZ, negZ, posP, negP)
+            sys.stdout.flush()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
