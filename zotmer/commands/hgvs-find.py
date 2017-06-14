@@ -11,13 +11,13 @@ Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -w WIDTH        context width [default: 1000]
+    -v              produce verbose output
 """
 
 import math
 import sys
 
 import docopt
-import sortedcontainers
 import yaml
 
 from pykmer.basics import fasta, ham, kmer, kmersList, murmer, render
@@ -74,6 +74,37 @@ def mannWhitney(xs, ys):
     #py = 0.5*math.erfc(zy/math.sqrt(2))
 
     return (ux, zx, px)
+
+def hist(xs):
+    r = {}
+    for x in xs:
+        if x not in r:
+            r[x] = 0
+        r[x] += 1
+    return r
+
+def kolmogorovSmirnov(hx, hy):
+    zs = list(set(hx.keys() + hy.keys()))
+    zs.sort()
+
+    cx = 0
+    tx = float(sum(hx.values()))
+    cy = 0
+    ty = float(sum(hy.values()))
+
+    dl = 0.0
+    dr = 0.0
+    for z in zs:
+        if z in hx:
+            cx += hx[z]
+        if z in hy:
+            cy += hy[z]
+        px = cx / tx
+        py = cy / ty
+        dl = max(dl, px - py)
+        dr = max(dr, py - px)
+        #print '%d\t%d\t%d\t%g\t%g\t%g\t%g\t%g\t%g' % (z, cx, cy, px, py, px - py, py - px, dl, dr)
+    return (dl, dr)
 
 def pairs(xs):
     assert len(xs) & 1 == 0
@@ -212,28 +243,82 @@ def main(argv):
                         kx[x] = 0
                     kx[x] += 1
 
-    for s in range(17, 17+100):
-        print >> sys.stderr, "s = %d" % (s,)
-        hx = sortedcontainers.SortedDict()
-        for (x, c) in kx.iteritems():
-            v = murmer(x, s)
-            hx[v] = (x,c)
-            while len(hx) > 2*K:
-                hx.popitem()
-            if x in posIdx:
-                for h in posIdx[x]:
-                    posRes[h][x] = c
-            if x in negIdx:
-                for h in negIdx[x]:
-                    negRes[h][x] = c
-        zs = [c for (_x, c) in hx.values()]
+    zh = {}
+    for (x, c) in kx.iteritems():
+        if c not in zh:
+            zh[c] = 0
+        zh[c] += 1
+        if x in posIdx:
+            for h in posIdx[x]:
+                posRes[h][x] = c
+        if x in negIdx:
+            for h in negIdx[x]:
+                negRes[h][x] = c
+    nz = len(kx)
 
+    if True:
+        for h in hs:
+            xs = posRes[h].values()
+            nx = float(len(xs))
+            xh = hist(xs)
+            ys = negRes[h].values()
+            ny = float(len(ys))
+            yh = hist(ys)
+
+            (_posL, posR) = kolmogorovSmirnov(xh, zh)
+            (_negL, negR) = kolmogorovSmirnov(yh, zh)
+
+            posW = math.sqrt((nx + nz)/(nx*nz))
+            negW = math.sqrt((ny + nz)/(ny*nz))
+
+            alpha = 0.05
+            posC = math.sqrt(-0.5*math.log(alpha/2.0)) * posW
+            negC = math.sqrt(-0.5*math.log(alpha/2.0)) * negW
+
+            posA = int(posR > posC)
+            negA = int(negR > negC)
+
+            if opts['-v']:
+                hx = {}
+                for x in xs:
+                    if x not in hx:
+                        hx[x] = [0, 0]
+                    hx[x][0] += 1
+                for y in ys:
+                    if y not in hx:
+                        hx[y] = [0, 0]
+                    hx[y][1] += 1
+                hx = hx.items()
+                hx.sort()
+                for (f, cs) in hx:
+                    print '%s\t%s\t%d\t%d\t%d\t%g\t%g\t%g\t%g\t%d\t%d' % (lcp(opts['<input>']), h, f, cs[0], cs[1], posR, negR, posC, negC, posA, negA)
+            else:
+                print '%s\t%s\t%g\t%g\t%g\t%g\t%d\t%d' % (lcp(opts['<input>']), h, posR, negR, posC, negC, posA, negA)
+            sys.stdout.flush()
+
+    if False:
+        zs = [int(3.0*i/(2*K)) for i in range(2*K)]
         for h in hs:
             xs = posRes[h].values()
             ys = negRes[h].values()
             (posU, posZ, posP) = mannWhitney(xs, zs)
             (negU, negZ, negP) = mannWhitney(ys, zs)
-            print '%d\t%s\t%s\t%g\t%g\t%g\t%g\t%g\t%g' % (s, lcp(opts['<input>']), h, posU, negU, posZ, negZ, posP, negP)
+            if opts['-v']:
+                hx = {}
+                for x in xs:
+                    if x not in hx:
+                        hx[x] = [0, 0]
+                    hx[x][0] += 1
+                for y in ys:
+                    if y not in hx:
+                        hx[y] = [0, 0]
+                    hx[y][1] += 1
+                hx = hx.items()
+                hx.sort()
+                for (f, cs) in hx:
+                    print '%s\t%s\t%d\t%d\t%d\t%g\t%g\t%g\t%g\t%g\t%g' % (lcp(opts['<input>']), h, f, cs[0], cs[1], posU, negU, posZ, negZ, posP, negP)
+            else:
+                print '%s\t%s\t%g\t%g\t%g\t%g\t%g\t%g' % (lcp(opts['<input>']), h, posU, negU, posZ, negZ, posP, negP)
             sys.stdout.flush()
 
 if __name__ == '__main__':
