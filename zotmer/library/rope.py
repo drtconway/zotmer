@@ -1,3 +1,5 @@
+import pytest
+
 class rope(object):
 
     @staticmethod
@@ -18,6 +20,38 @@ class rope(object):
         rhs = substr(parent, idx, len(parent))
         return (lhs, rhs)
 
+def test_atom0a():
+    s = ''
+    a = rope.atom(s)
+    assert len(a) == 0
+    assert a[:] == ''
+
+def test_atom0b():
+    s = ''
+    a = rope.atom(s)
+    with pytest.raises(AssertionError):
+        c = a[0]
+
+def test_atom0c():
+    s = ''
+    a = rope.atom(s)
+    with pytest.raises(AssertionError):
+        c = a[1:5]
+
+def test_atom1a():
+    s = 'GAAGAGGTGAATGTAATTCCTCCACACACTCCAGTTAGGTATGAATTTTCCTACTTTTAATTATATTATAATTTTG'
+    a = rope.atom(s)
+    assert len(s) == len(a)
+    assert a[:] == s
+
+def test_atom1b():
+    s = 'GAAGAGGTGAATGTAATTCCTCCACACACTCCAGTTAGGTATGAATTTTCCTACTTTTAATTATATTATAATTTTG'
+    a = rope.atom(s)
+    assert a[0] == 'G'
+    assert a[0:4] == 'GAAG'
+    assert a[:4] == 'GAAG'
+    assert a[58:] == 'AATTATATTATAATTTTG'
+
 class rope_atom(rope):
     def __init__(self, text):
         self.text = text
@@ -26,6 +60,11 @@ class rope_atom(rope):
         return len(self.text)
 
     def __getitem__(self, idx):
+        assert not isinstance(idx, slice) or idx.start is None or idx.start >= 0
+        assert not isinstance(idx, slice) or idx.stop is None or idx.stop <= len(self.text)
+        assert not isinstance(idx, slice) or idx.step is None or idx.step == 1
+        assert isinstance(idx, slice) or idx >= 0
+        assert isinstance(idx, slice) or idx < len(self.text)
         return self.text[idx]
 
     def __repr__(self):
@@ -36,6 +75,40 @@ class rope_atom(rope):
 
     def simplify(self):
         return self
+
+
+def test_substr0a():
+    s = ''
+    a = rope.atom(s)
+    r = rope.substr(a, 0, 0)
+    assert r[:] == s
+
+def test_substr0b():
+    s = 'GAAGAGGTGAATGTAATTCCTCCACACACTCCAGTTAGGTATGAATTTTCCTACTTTTAATTATATTATAATTTTG'
+    a = rope.atom(s)
+    r = rope.substr(a, 0, 0)
+    assert r[:] == ''
+
+def test_substr1a():
+    s = 'GAAGAGGTGAATGTAATTCCTCCACACACTCCAGTTAGGTATGAATTTTCCTACTTTTAATTATATTATAATTTTG'
+    a = rope.atom(s)
+    r = rope.substr(a, 0, 1)
+    assert r[:] == 'G'
+
+def test_substr1b():
+    s = 'GAAGAGGTGAATGTAATTCCTCCACACACTCCAGTTAGGTATGAATTTTCCTACTTTTAATTATATTATAATTTTG'
+    a = rope.atom(s)
+    r = rope.substr(a, 10, 20)
+    assert r[:] == 'ATGTAATTCC'
+
+def test_substr2a():
+    s = 'GAAGAGGTGAATGTAATTCCTCCACACACTCCAGTTAGGTATGAATTTTCCTACTTTTAATTATATTATAATTTTG'
+    a = rope.atom(s)
+    r0 = rope.substr(a, 10, 30)
+    assert r0[:] == 'ATGTAATTCCTCCACACACT'
+    r1 = rope.substr(r0, 5, 15)
+    assert r1[:] == 'ATTCCTCCAC'
+    assert repr(r1) == 'GAAGA...66...TTTTG[15:25]'
 
 class rope_substr(rope):
     def __init__(self, parent, start, stop):
