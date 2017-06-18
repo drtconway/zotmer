@@ -20,7 +20,7 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import fasta, ham, kmer, kmersList, murmer, render
+from pykmer.basics import ham, kmer, kmersList, murmer, render
 from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
 from zotmer.library.kmers import kmers
@@ -148,7 +148,6 @@ def ball(K, xs, d):
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
-
 
     K = int(opts['-k'])
     W = int(opts['-w'])
