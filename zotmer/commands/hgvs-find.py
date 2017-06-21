@@ -7,6 +7,7 @@ Usage:
 
 Options:
     -X              index HGVS variants
+    -a              include output for all variants, not just positive results
     -f FILENAME     read variants from a file
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
@@ -14,17 +15,81 @@ Options:
     -v              produce verbose output
 """
 
+import array
 import math
 import sys
 
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmer, kmersList, murmer, render
+from pykmer.basics import ham, kmer, kmersList, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
+from pykmer.misc import unionfind
+from pykmer.sparse import sparse
 from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts
+
+def trim(K, kx):
+    xs = kx.keys()
+    xs.sort()
+    xs = sparse(2*K, array.array('L', xs))
+
+    J = K // 2
+    K4 = 1 << (2*K)
+    i = 0
+    uf = unionfind()
+    while i < xs.count():
+        x = xs.select(i)
+        w = x >> (2*J)
+        y0 = w << (2*J)
+        y1 = (w+1) << (2*J)
+        r0 = xs.rank(y0)
+        if y1 < K4:
+            r1 = xs.rank(y1)
+        else:
+            r1 = xs.count()
+        for j in xrange(r0, r1):
+            y0 = xs.select(j)
+            for k in xrange(j+1, r1):
+                y1 = xs.select(k)
+                d = ham(y0, y1)
+                if d < 3:
+                    uf.union(y0, y1)
+                    uf.union(rc(K, y0), rc(K, y1))
+        i = r1
+
+    idx = {}
+    for i in xrange(xs.count()):
+        x = xs.select(i)
+        a = uf.find(x)
+        if a not in idx:
+            idx[a] = []
+        idx[a].append(x)
+
+    for xs in idx.values():
+        ds = set([])
+        for i in xrange(len(xs)):
+            x = xs[i]
+            xf = float(kx[x])
+            for j in xrange(i+1, len(xs)):
+                y = xs[j]
+                if y in ds:
+                    continue
+                d = ham(x, y)
+                if d >= 3:
+                    continue
+                yf = float(kx[y])
+                v = 1.0/(xf + yf)
+                if yf*v < 0.05:
+                    #print '%d\t%s\t%d\t%s\t%d' % (d, render(K, x), kx[x], render(K, y), kx[y])
+                    ds.add(y)
+                elif xf*v < 0.05:
+                    #print '%d\t%s\t%d\t%s\t%d' % (d, render(K, y), kx[y], render(K, x), kx[x])
+                    ds.add(x)
+                    break
+        for d in ds:
+            del kx[d]
 
 def lcp(xs):
     z = xs[0]
@@ -188,8 +253,6 @@ def main(argv):
                         p = v['position'] - 1
                         wt = seq[p-K:p + K]
                         mut = wt[:K] + v['variant'] + wt[K+1:]
-                        #print "wt:\t" + wt
-                        #print "mut:\t" + mut
                         wtXs = set(kmersList(K, wt, True))
                         mutXs = set(kmersList(K, mut, True))
                         wtYs = list(wtXs - mutXs)
@@ -214,6 +277,7 @@ def main(argv):
     negIdx = {}
     negRes = {}
     hs = set([])
+    univ = set([])
     for itm in itms:
         h = itm['hgvs']
         hs.add(h)
@@ -221,12 +285,14 @@ def main(argv):
         negRes[h] = {}
         for x in itm['pos']:
             y = kmer(x)
+            univ.add(y)
             if y not in posIdx:
                 posIdx[y] = []
             posIdx[y].append(h)
             posRes[h][y] = 0
         for x in itm['neg']:
             y = kmer(x)
+            univ.add(y)
             if y not in negIdx:
                 negIdx[y] = []
             negIdx[y].append(h)
@@ -237,10 +303,18 @@ def main(argv):
         with openFile(fn1) as f1, openFile(fn2) as f2:
             for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
                 xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
+                found = False
+                for x in xs:
+                    if x in univ:
+                        found = True
+                        break
+                if not found:
+                    continue
                 for x in xs:
                     if x not in kx:
                         kx[x] = 0
                     kx[x] += 1
+    trim(K, kx)
 
     zh = {}
     for (x, c) in kx.iteritems():
@@ -253,7 +327,7 @@ def main(argv):
         if x in negIdx:
             for h in negIdx[x]:
                 negRes[h][x] = c
-    nz = len(kx)
+    nz = float(len(kx))
 
     if True:
         for h in hs:
@@ -264,60 +338,47 @@ def main(argv):
             ny = float(len(ys))
             yh = hist(ys)
 
-            (_posL, posR) = kolmogorovSmirnov(xh, zh)
-            (_negL, negR) = kolmogorovSmirnov(yh, zh)
-
-            posW = math.sqrt((nx + nz)/(nx*nz))
-            negW = math.sqrt((ny + nz)/(ny*nz))
-
             alpha = 0.05
+
+            (_posL, posR) = kolmogorovSmirnov(xh, zh)
+            posW = math.sqrt((nx + nz)/(nx*nz))
             posC = math.sqrt(-0.5*math.log(alpha/2.0)) * posW
+            posA = posR / posC
+
+            (_negL, negR) = kolmogorovSmirnov(yh, zh)
+            negW = math.sqrt((ny + nz)/(ny*nz))
             negC = math.sqrt(-0.5*math.log(alpha/2.0)) * negW
+            negA = negR / negC
 
-            posA = int(posR > posC)
-            negA = int(negR > negC)
-
-            if opts['-v']:
-                hx = {}
-                for x in xs:
-                    if x not in hx:
-                        hx[x] = [0, 0]
-                    hx[x][0] += 1
-                for y in ys:
-                    if y not in hx:
-                        hx[y] = [0, 0]
-                    hx[y][1] += 1
-                hx = hx.items()
-                hx.sort()
-                for (f, cs) in hx:
-                    print '%s\t%s\t%d\t%d\t%d\t%g\t%g\t%g\t%g\t%d\t%d' % (lcp(opts['<input>']), h, f, cs[0], cs[1], posR, negR, posC, negC, posA, negA)
-            else:
-                print '%s\t%s\t%g\t%g\t%g\t%g\t%d\t%d' % (lcp(opts['<input>']), h, posR, negR, posC, negC, posA, negA)
-            sys.stdout.flush()
-
-    if False:
-        zs = [int(3.0*i/(2*K)) for i in range(2*K)]
-        for h in hs:
-            xs = posRes[h].values()
-            ys = negRes[h].values()
-            (posU, posZ, posP) = mannWhitney(xs, zs)
-            (negU, negZ, negP) = mannWhitney(ys, zs)
-            if opts['-v']:
-                hx = {}
-                for x in xs:
-                    if x not in hx:
-                        hx[x] = [0, 0]
-                    hx[x][0] += 1
-                for y in ys:
-                    if y not in hx:
-                        hx[y] = [0, 0]
-                    hx[y][1] += 1
-                hx = hx.items()
-                hx.sort()
-                for (f, cs) in hx:
-                    print '%s\t%s\t%d\t%d\t%d\t%g\t%g\t%g\t%g\t%g\t%g' % (lcp(opts['<input>']), h, f, cs[0], cs[1], posU, negU, posZ, negZ, posP, negP)
-            else:
-                print '%s\t%s\t%g\t%g\t%g\t%g\t%g\t%g' % (lcp(opts['<input>']), h, posU, negU, posZ, negZ, posP, negP)
+            if opts['-v'] and (opts['-a'] or posA > 1.0 or negA > 1.0):
+                vx = {}
+                for (c,f) in zh.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][0] = f
+                for (c,f) in xh.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][1] = f
+                for (c,f) in yh.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][2] = f
+                vx = vx.items()
+                vx.sort()
+                tx = [0, 0, 0]
+                for i in xrange(len(vx)):
+                    (c, fs) = vx[i]
+                    tx[0] += fs[0]
+                    tx[1] += fs[1]
+                    tx[2] += fs[2]
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posR, negR, posC, negC, posA, negA)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posR, negR, posC, negC, posA, negA)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posR, negR, posC, negC, posA, negA)
+            elif opts['-a']:
+                print '%s\t%g\t%g\t%g\t%g\t%g\t%g' % (h, posR, negR, posC, negC, posA, negA)
+            elif posA > 1.0:
+                print '%s\t%g\t%g\t%g\t%g\t%g\t%g' % (h, posR, negR, posC, negC, posA, negA)
             sys.stdout.flush()
 
 if __name__ == '__main__':
