@@ -11,7 +11,7 @@ Options:
     -f FILENAME     read variants from a file
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
-    -w WIDTH        context width [default: 1000]
+    -t BEDFILE      test an index against a set of genomic regions
     -v              produce verbose output
 """
 
@@ -29,6 +29,7 @@ from pykmer.sparse import sparse
 from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts
+from zotmer.library.rope import rope
 
 def trim(K, kx):
     xs = kx.keys()
@@ -215,7 +216,6 @@ def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     K = int(opts['-k'])
-    W = int(opts['-w'])
 
     if opts['-X']:
         variants = opts['<variant>']
@@ -267,6 +267,7 @@ def main(argv):
                         rs.append(r)
         with open(opts['<index>'], 'w') as f:
             yaml.safe_dump(rs, f)
+
         return
 
     with open(opts['<index>']) as f:
@@ -297,6 +298,63 @@ def main(argv):
                 negIdx[y] = []
             negIdx[y].append(h)
             negRes[h][y] = 0
+
+    if opts['-t']:
+        d = "."
+        if opts['-g']:
+            d = opts['-g']
+
+        roi = {}
+        with openFile(opts['-t']) as f:
+            for l in f:
+                if l[0] == '#':
+                    continue
+                t = l.split('\t')
+                if t[0] == 'track':
+                    continue
+                c = t[0]
+                s = int(t[1])
+                e = int(t[2])
+                if c not in roi:
+                    roi[c] = []
+                    roi[c].append((s, e))
+
+        kx = {}
+        for (c, rs) in roi.items():
+            with openFile(d + "/" + c + ".fa.gz") as f:
+                for (nm,seq) in readFasta(f):
+                    w = rope.atom(seq)
+                    for (s,e) in rs:
+                        v = rope.substr(w, s, e)
+                        for x in kmersList(K, v[:], True):
+                            if x not in kx:
+                                kx[x] = 0
+                            kx[x] += 1
+
+        for h in hs:
+            xs = posRes[h].keys()
+            posHist = {}
+            for x in xs:
+                c = kx.get(x, 0)
+                if c not in posHist:
+                    posHist[c] = 0
+                posHist[c] += 1
+            ys = negRes[h].keys()
+            negHist = {}
+            for y in ys:
+                c = kx.get(y, 0)
+                if c not in negHist:
+                    negHist[c] = 0
+                negHist[c] += 1
+            posU = posHist.get(1, 0)
+            posT = float(sum(posHist.values()))
+            posT = max(1.0, posT)
+            negU = negHist.get(1, 0)
+            negT = float(sum(negHist.values()))
+            negT = max(1.0, negT)
+            print '%s\t%g\t%g' % (h, posU/posT, negU/negT)
+
+        return
 
     kx = {}
     for (fn1, fn2) in pairs(opts['<input>']):
