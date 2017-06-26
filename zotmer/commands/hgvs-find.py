@@ -31,6 +31,20 @@ from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts
 from zotmer.library.rope import rope
 
+def merge(rs):
+    r = None
+    for r0 in rs:
+        if r is None:
+            r = r0
+            continue
+        if r[1] < r0[0]:
+            yield r
+            r = r0
+        else:
+            r = (min(r[0], r0[0]), max(r[1], r0[1]))
+    if r is not None:
+        yield r
+
 def trim(K, kx):
     xs = kx.keys()
     xs.sort()
@@ -316,20 +330,27 @@ def main(argv):
                 s = int(t[1])
                 e = int(t[2])
                 if c not in roi:
-                    roi[c] = []
-                    roi[c].append((s, e))
+                    roi[c] = set([])
+                roi[c].add((s, e))
 
         kx = {}
-        for (c, rs) in roi.items():
+        for x in univ:
+            kx[x] = 0
+
+        roiCs = roi.keys()
+        roiCs.sort()
+        for c in roiCs:
+            print >> sys.stderr, 'scanning %s' % (c,)
+            rs = list(roi[c])
+            rs.sort()
             with openFile(d + "/" + c + ".fa.gz") as f:
                 for (nm,seq) in readFasta(f):
                     w = rope.atom(seq)
-                    for (s,e) in rs:
+                    for (s,e) in merge(rs):
                         v = rope.substr(w, s, e)
                         for x in kmersList(K, v[:], True):
-                            if x not in kx:
-                                kx[x] = 0
-                            kx[x] += 1
+                            if x in kx:
+                                kx[x] += 1
 
         for h in hs:
             xs = posRes[h].keys()
@@ -349,10 +370,27 @@ def main(argv):
             posU = posHist.get(1, 0)
             posT = float(sum(posHist.values()))
             posT = max(1.0, posT)
+            posAvg = 0.0
+            for (c,f) in posHist.items():
+                posAvg += c*f
+            posAvg /= float(sum(posHist.values()))
             negU = negHist.get(1, 0)
             negT = float(sum(negHist.values()))
             negT = max(1.0, negT)
-            print '%s\t%g\t%g' % (h, posU/posT, negU/negT)
+            negAvg = 0.0
+            for (c,f) in negHist.items():
+                negAvg += c*f
+            negAvg /= float(sum(negHist.values()))
+            if opts['-v']:
+                hh = set(posHist.keys() + negHist.keys())
+                hh = list(hh)
+                hh.sort()
+                for k in hh:
+                    pc = posHist.get(k, 0)
+                    nc = negHist.get(k, 0)
+                    print '%s\t%g\t%g\t%g\t%g\t%d\t%d\t%d' % (h, posU/posT, posAvg, negU/negT, negAvg, k, pc, nc)
+            else:
+                print '%s\t%g\t%g\t%g\t%g' % (h, posU/posT, posAvg, negU/negT, negAvg)
 
         return
 
