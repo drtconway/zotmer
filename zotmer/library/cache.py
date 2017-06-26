@@ -12,7 +12,7 @@ class entrez(object):
     def __init__(self):
         self.base = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
         self.root = '.zot/cache'
-        self.compression = ''
+        self.compression = '.gz'
 
     def __getitem__(self, acc):
         pth = self.makePath(acc, self.compression)
@@ -44,12 +44,12 @@ class entrez(object):
 
             # write "small" files in one go.
             if 'Content-Length' in r.headers and int(r.headers['Content-Length']) <= MB64:
-                with open(path, 'w') as f:
+                with openFile(path, 'w') as f:
                     f.write(r.content)
                 return
 
             # grab "big" files a piece at a time.
-            with open(path, 'w') as f:
+            with openFile(path, 'w') as f:
                 for chk in r.iter_content(chunk_size=None):
                     f.write(chk)
 
