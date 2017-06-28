@@ -18,6 +18,7 @@ def make_masks(K, tau):
 def trim(K, kx):
     tau = 3
     msks = make_masks(K, tau)
+    frac = 0.05
 
     vx = {}
     for x in kx.iterkeys():
@@ -29,7 +30,6 @@ def trim(K, kx):
     
     wx = unionfind()
     for xs in vx.itervalues():
-        print >> sys.stderr, "len(xs) = %d" % (len(xs),)
         for i in xrange(len(xs)):
             x = xs[i]
             for j in xrange(i+1, len(xs)):
@@ -48,12 +48,9 @@ def trim(K, kx):
     wx = set([])
     for xs in vx.values():
         xs.sort()
-        if len(xs) > 1:
-            print >> sys.stderr, xs
         i = 0
-        while i < len(xs) and xs[i][0] < 0.05*xs[-1][0]:
+        while i < len(xs) and xs[i][0] < frac*xs[-1][0]:
             wx.add(xs[i][1])
             i += 1
     for x in wx:
-        print >> sys.stderr, 'deleting %s (%d)' % (render(K, x), kx[x])
         del kx[x]

@@ -2,10 +2,12 @@
 zot hgvs-find - search for known variants in read data.
 
 Usage:
+    zot hgvs-find -R [options] <variant>
     zot hgvs-find -X [options] <index> [<variant>...]
     zot hgvs-find [options] <index> <input>...
 
 Options:
+    -R              report the ambiguity associated with a variant
     -X              index HGVS variants
     -a              include output for all variants, not just positive results
     -f FILENAME     read variants from a file
@@ -22,7 +24,7 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmer, kmersList, murmer, rc, render
+from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
@@ -30,6 +32,7 @@ from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts
 from zotmer.library.rope import rope
+from zotmer.library.trim import trim
 
 def merge(rs):
     r = None
@@ -44,67 +47,6 @@ def merge(rs):
             r = (min(r[0], r0[0]), max(r[1], r0[1]))
     if r is not None:
         yield r
-
-def trim(K, kx):
-    xs = kx.keys()
-    xs.sort()
-    xs = sparse(2*K, array.array('L', xs))
-
-    J = K // 2
-    K4 = 1 << (2*K)
-    i = 0
-    uf = unionfind()
-    while i < xs.count():
-        x = xs.select(i)
-        w = x >> (2*J)
-        y0 = w << (2*J)
-        y1 = (w+1) << (2*J)
-        r0 = xs.rank(y0)
-        if y1 < K4:
-            r1 = xs.rank(y1)
-        else:
-            r1 = xs.count()
-        for j in xrange(r0, r1):
-            y0 = xs.select(j)
-            for k in xrange(j+1, r1):
-                y1 = xs.select(k)
-                d = ham(y0, y1)
-                if d < 3:
-                    uf.union(y0, y1)
-                    uf.union(rc(K, y0), rc(K, y1))
-        i = r1
-
-    idx = {}
-    for i in xrange(xs.count()):
-        x = xs.select(i)
-        a = uf.find(x)
-        if a not in idx:
-            idx[a] = []
-        idx[a].append(x)
-
-    for xs in idx.values():
-        ds = set([])
-        for i in xrange(len(xs)):
-            x = xs[i]
-            xf = float(kx[x])
-            for j in xrange(i+1, len(xs)):
-                y = xs[j]
-                if y in ds:
-                    continue
-                d = ham(x, y)
-                if d >= 3:
-                    continue
-                yf = float(kx[y])
-                v = 1.0/(xf + yf)
-                if yf*v < 0.05:
-                    #print '%d\t%s\t%d\t%s\t%d' % (d, render(K, x), kx[x], render(K, y), kx[y])
-                    ds.add(y)
-                elif xf*v < 0.05:
-                    #print '%d\t%s\t%d\t%s\t%d' % (d, render(K, y), kx[y], render(K, x), kx[x])
-                    ds.add(x)
-                    break
-        for d in ds:
-            del kx[d]
 
 def lcp(xs):
     z = xs[0]
@@ -230,6 +172,54 @@ def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     K = int(opts['-k'])
+
+    if opts['-R']:
+        x = parseHGVS(opts['<variant>'][0])
+
+        d = "."
+        if opts['-g']:
+            d = opts['-g']
+
+        acc = x['accession']
+        if acc not in refSeq2Hg19:
+            print >> sys.stderr, "accession %s not supported" % (acc,)
+            return
+        h = refSeq2Hg19[acc]
+
+        with openFile(d + "/" + h + ".fa.gz") as f:
+            for (nm,seq) in readFasta(f):
+                p = x['position'] - 1
+                wt = seq[p-K:p + K]
+                mut = wt[:K] + x['variant'] + wt[K+1:]
+                wtXs = set(kmersList(K, wt, True))
+                mutXs = set(kmersList(K, mut, True))
+                wtYs = list(wtXs - mutXs)
+                wtYs.sort()
+                mutYs = list(mutXs - wtXs)
+                mutYs.sort()
+
+        wt = dict([(y,[]) for y in wtYs])
+        mut = dict([(y,[]) for y in mutYs])
+
+        for c in refSeq2Hg19.values():
+            print >> sys.stderr, 'scanning %s' % (c,)
+            with openFile(d + "/" + c + ".fa.gz") as f:
+                for (nm,seq) in readFasta(f):
+                    for (y,p) in kmersWithPos(K, seq, True):
+                        if y in wt:
+                            wt[y].append((c,p))
+                        if y in mut:
+                            mut[y].append((c,p))
+
+        for (y,ps) in wt.iteritems():
+            for p in ps:
+                print 'wt\t%s\t%s\t%d' % (render(K, y), p[0], p[1])
+
+        for (y,ps) in mut.iteritems():
+            for p in ps:
+                print 'mut\t%s\t%s\t%d' % (render(K, y), p[0], p[1])
+
+        return
 
     if opts['-X']:
         variants = opts['<variant>']
