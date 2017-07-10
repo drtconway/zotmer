@@ -20,6 +20,17 @@ class rope(object):
         rhs = substr(parent, idx, len(parent))
         return (lhs, rhs)
 
+    @staticmethod
+    def join(itms):
+        assert len(itms) > 0
+        if len(itms) == 1:
+            return itms[0]
+        else:
+            m = len(itms) // 2
+            l = rope.join(itms[:m])
+            r = rope.join(itms[m:])
+            return rope.concat(l, r)
+
 def test_atom0a():
     s = ''
     a = rope.atom(s)
