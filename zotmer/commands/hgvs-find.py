@@ -97,6 +97,25 @@ def mannWhitney(xs, ys):
 
     return (ux, zx, px)
 
+def kullbackLeibler(xs, ys):
+    assert len(xs) == len(ys)
+
+    xs = [max(1, x) for x in xs]
+    tx = float(sum(xs))
+    px = [x/tx for x in xs]
+
+    ys = [max(1, y) for y in ys]
+    ty = float(sum(ys))
+    py = [y/ty for y in ys]
+
+    d = 0.0
+    for (x,y) in zip(px, py):
+        if x == 0.0:
+            continue
+        assert y > 0
+        d += x * math.log(x/y)
+    return d
+
 def hist(xs):
     r = {}
     for x in xs:
