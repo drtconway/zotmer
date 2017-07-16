@@ -28,8 +28,8 @@ from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, murmer, rc,
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
+from pykmer.stats import logGammaQ
 from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
-from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts
 from zotmer.library.rope import rope
 from zotmer.library.trim import trim
@@ -144,7 +144,6 @@ def kolmogorovSmirnov(hx, hy):
         py = cy / ty
         dl = max(dl, px - py)
         dr = max(dr, py - px)
-        #print '%d\t%d\t%d\t%g\t%g\t%g\t%g\t%g\t%g' % (z, cx, cy, px, py, px - py, py - px, dl, dr)
     return (dl, dr)
 
 def pairs(xs):
@@ -187,35 +186,101 @@ def ball(K, xs, d):
             ys |= set(neigh(K, x, i))
     return ys
 
+def applyVariant(sf, v):
+    acc = v['accession']
+    seq = sf[acc]
+    s = rope.atom(seq)
+    if v['type'] == 'substitution':
+        p = v['position']
+        l = rope.substr(s, 0, p)
+        m = rope.atom(v['variant'])
+        r = rope.substr(s, p + 1, len(s))
+        return (s, rope.join([l, m, r]))
+    elif v['type'] == 'insertion':
+        p = v['after-position'] + 1
+        q = v['before-position']
+        assert p == q
+        l = rope.substr(s, 0, p)
+        m = rope.atom(v['sequence'])
+        r = rope.substr(s, p, len(s))
+        return (s, rope.join([l, m, r]))
+    elif v['type'] == 'deletion':
+        p = v['first-position']
+        q = v['last-position'] + 1
+        l = rope.substr(s, 0, p)
+        r = rope.substr(s, q, len(s))
+        return (s, rope.concat(l, r))
+    return None
+
+def context(k, v, sf):
+    if v['type'] == 'substitution':
+        p = v['position']
+        wt = (p - k + 1, p + k)
+        mut = wt
+    elif v['type'] == 'insertion':
+        p = v['after-position'] + 1
+        q = v['before-position']
+        wt = (p - k + 1, q + k - 1)
+        mut = (p - k + 1, q + k - 1 + len(v['sequence']))
+    elif v['type'] == 'deletion':
+        p = v['first-position']
+        q = v['last-position'] + 1
+        wt = (p - k + 1, q + k)
+        mut = (p - k + 1, p + k)
+    else:
+        return None
+
+    (r, s) = applyVariant(sf, v)
+
+    wtXs = set(kmers(k, r[wt[0]:wt[1]], True))
+    mutXs = set(kmers(k, s[mut[0]:mut[1]], True))
+    com = wtXs & mutXs
+    wtXs -= com
+    mutXs -= com
+
+    wtXs = list(wtXs)
+    wtXs.sort()
+
+    mutXs = list(mutXs)
+    mutXs.sort()
+
+    print '%s\t%d\t%d\t%d' % (v['hgvs'], len(wtXs), len(mutXs), len(com))
+    return (wtXs, mutXs)
+
+class SequenceFactory(object):
+    def __init__(self, home):
+        self.home = home
+        self.prevAcc = None
+        self.prevSeq = None
+
+    def __getitem__(self, acc):
+        if acc != self.prevAcc:
+            if acc not in refSeq2Hg19:
+                print >> sys.stderr, "accession %s not available." % (acc)
+            assert acc in refSeq2Hg19
+            h = refSeq2Hg19[acc]
+
+            with openFile(self.home + "/" + h + ".fa.gz") as f:
+                for (nm,seq) in readFasta(f):
+                    self.prevAcc = acc
+                    self.prevSeq = seq
+                    break
+        return self.prevSeq
+
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     K = int(opts['-k'])
 
+    d = "."
+    if opts['-g']:
+        d = opts['-g']
+    sf = SequenceFactory(d)
+
     if opts['-R']:
         x = parseHGVS(opts['<variant>'][0])
-
-        d = "."
-        if opts['-g']:
-            d = opts['-g']
-
         acc = x['accession']
-        if acc not in refSeq2Hg19:
-            print >> sys.stderr, "accession %s not supported" % (acc,)
-            return
-        h = refSeq2Hg19[acc]
-
-        with openFile(d + "/" + h + ".fa.gz") as f:
-            for (nm,seq) in readFasta(f):
-                p = x['position'] - 1
-                wt = seq[p-K:p + K]
-                mut = wt[:K] + x['variant'] + wt[K+1:]
-                wtXs = set(kmersList(K, wt, True))
-                mutXs = set(kmersList(K, mut, True))
-                wtYs = list(wtXs - mutXs)
-                wtYs.sort()
-                mutYs = list(mutXs - wtXs)
-                mutYs.sort()
+        (wtYs, mutYs) = context(K, x, sf)
 
         wt = dict([(y,[]) for y in wtYs])
         mut = dict([(y,[]) for y in mutYs])
@@ -231,10 +296,14 @@ def main(argv):
                             mut[y].append((c,p))
 
         for (y,ps) in wt.iteritems():
+            if len(ps) < 2:
+                continue
             for p in ps:
                 print 'wt\t%s\t%s\t%d' % (render(K, y), p[0], p[1])
 
         for (y,ps) in mut.iteritems():
+            if len(ps) < 2:
+                continue
             for p in ps:
                 print 'mut\t%s\t%s\t%d' % (render(K, y), p[0], p[1])
 
@@ -245,14 +314,16 @@ def main(argv):
         if opts['-f']:
             with openFile(opts['-f']) as f:
                 variants += f.read().split()
+
+        wanted = set(['substitution', 'insertion', 'deletion'])
         vx = {}
         for v in variants:
             x = parseHGVS(v)
             if x is None:
                 print >> sys.stderr, "unable to parse %s" % (v,)
                 continue
-            if x['type'] != 'substitution':
-                print >> sys.stderr, "only substitutions are supported at this time: %s" % (v,)
+            if x['type'] not in wanted:
+                print >> sys.stderr, "variant type not suppprted: %s" % (v,)
                 continue
             x['hgvs'] = v
             acc = x['accession']
@@ -266,28 +337,17 @@ def main(argv):
 
         rs = []
         for (acc, vs) in vx.iteritems():
-            if acc not in refSeq2Hg19:
-                print >> sys.stderr, "accession %s not supported" % (acc,)
-                continue
-            h = refSeq2Hg19[acc]
-            with openFile(d + "/" + h + ".fa.gz") as f:
-                for (nm,seq) in readFasta(f):
-                    for v in vs:
-                        p = v['position'] - 1
-                        wt = seq[p-K:p + K]
-                        mut = wt[:K] + v['variant'] + wt[K+1:]
-                        wtXs = set(kmersList(K, wt, True))
-                        mutXs = set(kmersList(K, mut, True))
-                        wtYs = list(wtXs - mutXs)
-                        wtYs.sort()
-                        mutYs = list(mutXs - wtXs)
-                        mutYs.sort()
+            for v in vs:
+                (wtYs, mutYs) = context(K, v, sf)
+                if len(wtYs) == 0 or len(mutYs) == 0:
+                    print >> sys.stderr, "variant has no distinguishing k-mers: %s" % (v['hgvs'],)
+                    continue
+                r = {}
+                r['hgvs'] = v['hgvs']
+                r['pos'] = [render(K, y) for y in mutYs]
+                r['neg'] = [render(K, y) for y in wtYs]
+                rs.append(r)
 
-                        r = {}
-                        r['hgvs'] = v['hgvs']
-                        r['pos'] = [render(K, y) for y in mutYs]
-                        r['neg'] = [render(K, y) for y in wtYs]
-                        rs.append(r)
         with open(opts['<index>'], 'w') as f:
             yaml.safe_dump(rs, f)
 
@@ -419,7 +479,8 @@ def main(argv):
                     if x not in kx:
                         kx[x] = 0
                     kx[x] += 1
-    trim(K, kx)
+
+    #trim(K, kx)
 
     zh = {}
     for (x, c) in kx.iteritems():
@@ -435,6 +496,49 @@ def main(argv):
     nz = float(len(kx))
 
     if True:
+        for h in hs:
+            xs = [max(1, x) for x in posRes[h].values()]
+            nx = float(len(xs))
+            xh = hist(xs)
+            ys = [max(1, y) for y in negRes[h].values()]
+            ny = float(len(ys))
+            yh = hist(ys)
+
+            lpv = math.log(0.01)
+
+            (posC, _posD, posP) = chiSquared(xh, zh)
+            (negC, _negD, negP) = chiSquared(yh, zh)
+
+            if opts['-v'] and (opts['-a'] or posP < lpv or negP < lpv):
+                vx = {}
+                for (c,f) in zh.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][0] = f
+                for (c,f) in xh.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][1] = f
+                for (c,f) in yh.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][2] = f
+                vx = vx.items()
+                vx.sort()
+                tx = [0, 0, 0]
+                for i in xrange(len(vx)):
+                    (c, fs) = vx[i]
+                    tx[0] += fs[0]
+                    tx[1] += fs[1]
+                    tx[2] += fs[2]
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posC, negC, posP, negP)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posC, negC, posP, negP)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posC, negC, posP, negP)
+            elif opts['-a'] or posP < lpv:
+                print '%s\t%g\t%g\t%g\t%g' % (h, posC, negC, posP, negP)
+            sys.stdout.flush()
+
+    if False:
         for h in hs:
             xs = posRes[h].values()
             nx = float(len(xs))
