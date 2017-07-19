@@ -13,6 +13,7 @@ Options:
     -f FILENAME     read variants from a file
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
+    -s              merge strands rather than counting them separately
     -t BEDFILE      test an index against a set of genomic regions
     -v              produce verbose output
 """
@@ -24,15 +25,18 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, murmer, rc, render
+from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, kmersWithPosList, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
-from pykmer.stats import logGammaQ
+from pykmer.stats import logGammaP, logGammaQ
 from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
 from zotmer.library.files import readKmersAndCounts
 from zotmer.library.rope import rope
 from zotmer.library.trim import trim
+
+def sqr(x):
+    return x*x
 
 def merge(rs):
     r = None
@@ -97,14 +101,20 @@ def mannWhitney(xs, ys):
 
     return (ux, zx, px)
 
-def kullbackLeibler(xs, ys):
-    assert len(xs) == len(ys)
+def kullbackLeibler(Xs, Ys):
+    m = 1 + int(0.5 + math.log(max(Xs.keys() + Ys.keys())))
 
-    xs = [max(1, x) for x in xs]
+    xs = [0 for i in range(m)]
+    for (f, c) in Xs.items():
+        j = int(0.5 + math.log(f))
+        xs[j] += c
     tx = float(sum(xs))
     px = [x/tx for x in xs]
 
-    ys = [max(1, y) for y in ys]
+    ys = [0 for i in range(m)]
+    for (f, c) in Ys.items():
+        j = int(0.5 + math.log(f))
+        ys[j] += c
     ty = float(sum(ys))
     py = [y/ty for y in ys]
 
@@ -145,6 +155,40 @@ def kolmogorovSmirnov(hx, hy):
         dl = max(dl, px - py)
         dr = max(dr, py - px)
     return (dl, dr)
+
+def chiSquared(Xs, Ys):
+    m = 1 + int(0.5 + math.log(max(Xs.keys() + Ys.keys())))
+
+    xs = [0 for i in range(m)]
+    for (f, c) in Xs.items():
+        j = int(0.5 + math.log(f))
+        xs[j] += c
+    tx = float(sum(xs))
+    px = [x/tx for x in xs]
+
+    ys = [0 for i in range(m)]
+    for (f, c) in Ys.items():
+        j = int(0.5 + math.log(f))
+        ys[j] += c
+    ty = float(sum(ys))
+    py = [y/ty for y in ys]
+
+    c2 = 0.0
+    for (x,y) in zip(px, py):
+        assert y > 0
+        c2 += sqr(x - y)/y
+    return (c2, m)
+
+def chiSquaredPval(x, n, lowerTail=True, logP=False):
+    lp = 0
+    if lowerTail:
+        lp = logGammaP(n/2.0, x/2.0)
+    else:
+        lp = logGammaQ(n/2.0, x/2.0)
+    if logP:
+        return lp
+    else:
+        return math.exp(lp)
 
 def pairs(xs):
     assert len(xs) & 1 == 0
@@ -212,6 +256,31 @@ def applyVariant(sf, v):
         return (s, rope.concat(l, r))
     return None
 
+def context0(k, v, L, sf):
+    if v['type'] == 'substitution':
+        p = v['position']
+        wt = (p - L + 1, p + L)
+        mut = wt
+    elif v['type'] == 'insertion':
+        p = v['after-position'] + 1
+        q = v['before-position']
+        wt = (p - L + 1, q + L - 1)
+        mut = (p - L + 1, q + L - 1 + len(v['sequence']))
+    elif v['type'] == 'deletion':
+        p = v['first-position']
+        q = v['last-position'] + 1
+        wt = (p - L + 1, q + L)
+        mut = (p - L + 1, p + L)
+    else:
+        return None
+
+    (r, s) = applyVariant(sf, v)
+
+    wtXs = kmersWithPosList(k, r[wt[0]:wt[1]], False)
+    mutXs = kmersWithPosList(k, s[mut[0]:mut[1]], False)
+
+    return (wtXs, mutXs)
+
 def context(k, v, sf):
     if v['type'] == 'substitution':
         p = v['position']
@@ -278,34 +347,29 @@ def main(argv):
     sf = SequenceFactory(d)
 
     if opts['-R']:
-        x = parseHGVS(opts['<variant>'][0])
-        acc = x['accession']
-        (wtYs, mutYs) = context(K, x, sf)
-
-        wt = dict([(y,[]) for y in wtYs])
-        mut = dict([(y,[]) for y in mutYs])
+        v = parseHGVS(opts['<variant>'][0])
+        (wt, mut) = context0(K, v, 100, sf)
+        idx = {}
+        for (x, p) in wt:
+            idx[x] = []
+        for (x, p) in mut:
+            idx[x] = []
 
         for c in refSeq2Hg19.values():
             print >> sys.stderr, 'scanning %s' % (c,)
             with openFile(d + "/" + c + ".fa.gz") as f:
                 for (nm,seq) in readFasta(f):
                     for (y,p) in kmersWithPos(K, seq, True):
-                        if y in wt:
-                            wt[y].append((c,p))
-                        if y in mut:
-                            mut[y].append((c,p))
+                        if y in idx:
+                            idx[y].append((c,p))
 
-        for (y,ps) in wt.iteritems():
-            if len(ps) < 2:
-                continue
-            for p in ps:
-                print 'wt\t%s\t%s\t%d' % (render(K, y), p[0], p[1])
+        for (x,p) in wt:
+            for (c,p0) in idx[x]:
+                print 'wt\t%s\t%d\t%s\t%d' % (render(K, x), p, c, p0)
 
-        for (y,ps) in mut.iteritems():
-            if len(ps) < 2:
-                continue
-            for p in ps:
-                print 'mut\t%s\t%s\t%d' % (render(K, y), p[0], p[1])
+        for (x,p) in mut:
+            for (c,p0) in idx[x]:
+                print 'mut\t%s\t%d\t%s\t%d' % (render(K, x), p, c, p0)
 
         return
 
@@ -463,11 +527,20 @@ def main(argv):
 
         return
 
+    combineStrands = False
+    if opts['-s']:
+        combineStrands = True
+
     kx = {}
+    rn = 0
+    M = (1 << 18) - 1
     for (fn1, fn2) in pairs(opts['<input>']):
         with openFile(fn1) as f1, openFile(fn2) as f2:
             for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
-                xs = kmersList(K, fq1[1]) + kmersList(K, fq2[1])
+                rn += 1
+                if (rn & M) == 0 and opts['-v']:
+                    print >> sys.stderr, 'read pairs processed: %d' % (rn,)
+                xs = kmersList(K, fq1[1], combineStrands) + kmersList(K, fq2[1], combineStrands)
                 found = False
                 for x in xs:
                     if x in univ:
@@ -504,12 +577,12 @@ def main(argv):
             ny = float(len(ys))
             yh = hist(ys)
 
-            lpv = math.log(0.01)
+            (posD, posDF) = chiSquared(xh, zh)
+            posP = chiSquaredPval(posD, posDF, lowerTail=False)
+            (negD, negDF) = chiSquared(yh, zh)
+            negP = chiSquaredPval(negD, negDF, lowerTail=False)
 
-            (posC, _posD, posP) = chiSquared(xh, zh)
-            (negC, _negD, negP) = chiSquared(yh, zh)
-
-            if opts['-v'] and (opts['-a'] or posP < lpv or negP < lpv):
+            if opts['-v']:
                 vx = {}
                 for (c,f) in zh.iteritems():
                     if c not in vx:
@@ -531,11 +604,11 @@ def main(argv):
                     tx[0] += fs[0]
                     tx[1] += fs[1]
                     tx[2] += fs[2]
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posC, negC, posP, negP)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posC, negC, posP, negP)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posC, negC, posP, negP)
-            elif opts['-a'] or posP < lpv:
-                print '%s\t%g\t%g\t%g\t%g' % (h, posC, negC, posP, negP)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posD, negD)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posD, negD)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posD, negD)
+            elif opts['-a']:
+                print '%s\t%g\t%g\t%g\t%g' % (h, posD, negD, posP, negP)
             sys.stdout.flush()
 
     if False:
