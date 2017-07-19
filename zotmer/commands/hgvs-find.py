@@ -173,6 +173,8 @@ def chiSquared(Xs, Ys):
     ty = float(sum(ys))
     py = [y/ty for y in ys]
 
+    #print >> sys.stderr, [(x, y, sqr(x - y)/y) for (x, y) in zip(px, py)]
+
     c2 = 0.0
     for (x,y) in zip(px, py):
         assert y > 0
@@ -248,7 +250,11 @@ def context0(k, v, L, sf):
     else:
         return None
 
-    (r, s) = applyVariant(sf, v)
+    acc = v['accession']
+    seq = sf[acc]
+    s = rope.atom(seq)
+
+    r = applyVariant(s, v)
 
     #print (' '*(L-1)) + '.'
     #print r[wt[0]:wt[1]]
@@ -261,23 +267,28 @@ def context0(k, v, L, sf):
 
 def context(k, v, sf):
     if v['type'] == 'substitution':
-        p = v['position']
+        p = v['position'] - 1
         wt = (p - k + 1, p + k)
         mut = wt
     elif v['type'] == 'insertion':
-        p = v['after-position'] + 1
-        q = v['before-position']
+        p = v['after-position']
+        q = v['before-position'] - 1
+        assert p == q
         wt = (p - k + 1, q + k - 1)
         mut = (p - k + 1, q + k - 1 + len(v['sequence']))
     elif v['type'] == 'deletion':
-        p = v['first-position']
-        q = v['last-position'] + 1
+        p = v['first-position'] - 1
+        q = v['last-position']
         wt = (p - k + 1, q + k)
         mut = (p - k + 1, p + k)
     else:
         return None
 
-    (r, s) = applyVariant(sf, v)
+    acc = v['accession']
+    seq = sf[acc]
+    s = rope.atom(seq)
+
+    r = applyVariant(s, v)
 
     wtXs = set(kmers(k, r[wt[0]:wt[1]], True))
     mutXs = set(kmers(k, s[mut[0]:mut[1]], True))
@@ -291,7 +302,7 @@ def context(k, v, sf):
     mutXs = list(mutXs)
     mutXs.sort()
 
-    print '%s\t%d\t%d\t%d' % (v['hgvs'], len(wtXs), len(mutXs), len(com))
+    print '%s\t%s\t%d\t%d\t%d' % (v['hgvs'], v['type'], len(wtXs), len(mutXs), len(com))
     return (wtXs, mutXs)
 
 class SequenceFactory(object):
@@ -365,7 +376,7 @@ def main(argv):
                 print >> sys.stderr, "unable to parse %s" % (v,)
                 continue
             if x['type'] not in wanted:
-                print >> sys.stderr, "variant type not suppprted: %s" % (v,)
+                print >> sys.stderr, "variant type not supported: %s" % (v,)
                 continue
             x['hgvs'] = v
             acc = x['accession']
@@ -556,9 +567,11 @@ def main(argv):
             yh = hist(ys)
 
             (posD, posDF) = chiSquared(xh, zh)
-            posP = chiSquaredPval(posD, posDF, lowerTail=False)
             (negD, negDF) = chiSquared(yh, zh)
+            posP = chiSquaredPval(posD, posDF, lowerTail=False)
             negP = chiSquaredPval(negD, negDF, lowerTail=False)
+            #print >> sys.stderr, h, posD, posDF, posP, sorted(xh.items())
+            #print >> sys.stderr, h, negD, negDF, negP, sorted(yh.items())
 
             if opts['-v']:
                 vx = {}
@@ -582,9 +595,9 @@ def main(argv):
                     tx[0] += fs[0]
                     tx[1] += fs[1]
                     tx[2] += fs[2]
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posD, negD)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posD, negD)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posD, negD)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posD, negD, posP, negP)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posD, negD, posP, negP)
+                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posD, negD, posP, negP)
             elif opts['-a']:
                 print '%s\t%g\t%g\t%g\t%g' % (h, posD, negD, posP, negP)
             sys.stdout.flush()

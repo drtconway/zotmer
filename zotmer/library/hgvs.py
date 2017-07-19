@@ -1,5 +1,7 @@
 import re
 
+from zotmer.library.rope import rope
+
 hg19Data = [("chr1",   "CM000663.1",  "NC_000001.10"),
             ("chr2",   "CM000664.1",  "NC_000002.11"),
             ("chr3",   "CM000665.1",  "NC_000003.11"),
@@ -127,16 +129,13 @@ def parseHGVS(s):
 
     return None
 
-def applyVariant(sf, v):
-    acc = v['accession']
-    seq = sf[acc]
-    s = rope.atom(seq)
+def applyVariant(s, v):
     if v['type'] == 'substitution':
         p = v['position'] - 1
         l = rope.substr(s, 0, p)
         m = rope.atom(v['variant'])
         r = rope.substr(s, p + 1, len(s))
-        return (s, rope.join([l, m, r]))
+        return rope.join([l, m, r])
     elif v['type'] == 'insertion':
         p = v['after-position']
         q = v['before-position'] - 1
@@ -144,12 +143,12 @@ def applyVariant(sf, v):
         l = rope.substr(s, 0, p)
         m = rope.atom(v['sequence'])
         r = rope.substr(s, p, len(s))
-        return (s, rope.join([l, m, r]))
+        return rope.join([l, m, r])
     elif v['type'] == 'deletion':
         p = v['first-position'] - 1
         q = v['last-position']
         l = rope.substr(s, 0, p)
         r = rope.substr(s, q, len(s))
-        return (s, rope.concat(l, r))
+        return rope.concat(l, r)
     return None
 
