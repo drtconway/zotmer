@@ -30,7 +30,7 @@ from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
 from pykmer.stats import logGammaP, logGammaQ
-from zotmer.library.hgvs import parseHGVS, refSeq2Hg19
+from zotmer.library.hgvs import applyVariant, parseHGVS, refSeq2Hg19
 from zotmer.library.files import readKmersAndCounts
 from zotmer.library.rope import rope
 from zotmer.library.trim import trim
@@ -230,35 +230,9 @@ def ball(K, xs, d):
             ys |= set(neigh(K, x, i))
     return ys
 
-def applyVariant(sf, v):
-    acc = v['accession']
-    seq = sf[acc]
-    s = rope.atom(seq)
-    if v['type'] == 'substitution':
-        p = v['position']
-        l = rope.substr(s, 0, p)
-        m = rope.atom(v['variant'])
-        r = rope.substr(s, p + 1, len(s))
-        return (s, rope.join([l, m, r]))
-    elif v['type'] == 'insertion':
-        p = v['after-position'] + 1
-        q = v['before-position']
-        assert p == q
-        l = rope.substr(s, 0, p)
-        m = rope.atom(v['sequence'])
-        r = rope.substr(s, p, len(s))
-        return (s, rope.join([l, m, r]))
-    elif v['type'] == 'deletion':
-        p = v['first-position']
-        q = v['last-position'] + 1
-        l = rope.substr(s, 0, p)
-        r = rope.substr(s, q, len(s))
-        return (s, rope.concat(l, r))
-    return None
-
 def context0(k, v, L, sf):
     if v['type'] == 'substitution':
-        p = v['position']
+        p = v['position'] - 1
         wt = (p - L + 1, p + L)
         mut = wt
     elif v['type'] == 'insertion':
@@ -275,6 +249,10 @@ def context0(k, v, L, sf):
         return None
 
     (r, s) = applyVariant(sf, v)
+
+    #print (' '*(L-1)) + '.'
+    #print r[wt[0]:wt[1]]
+    #print s[mut[0]:mut[1]]
 
     wtXs = kmersWithPosList(k, r[wt[0]:wt[1]], False)
     mutXs = kmersWithPosList(k, s[mut[0]:mut[1]], False)

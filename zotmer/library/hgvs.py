@@ -126,3 +126,30 @@ def parseHGVS(s):
         return r
 
     return None
+
+def applyVariant(sf, v):
+    acc = v['accession']
+    seq = sf[acc]
+    s = rope.atom(seq)
+    if v['type'] == 'substitution':
+        p = v['position'] - 1
+        l = rope.substr(s, 0, p)
+        m = rope.atom(v['variant'])
+        r = rope.substr(s, p + 1, len(s))
+        return (s, rope.join([l, m, r]))
+    elif v['type'] == 'insertion':
+        p = v['after-position']
+        q = v['before-position'] - 1
+        assert p == q
+        l = rope.substr(s, 0, p)
+        m = rope.atom(v['sequence'])
+        r = rope.substr(s, p, len(s))
+        return (s, rope.join([l, m, r]))
+    elif v['type'] == 'deletion':
+        p = v['first-position'] - 1
+        q = v['last-position']
+        l = rope.substr(s, 0, p)
+        r = rope.substr(s, q, len(s))
+        return (s, rope.concat(l, r))
+    return None
+
