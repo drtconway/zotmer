@@ -28,6 +28,7 @@ hg19Data = [("chr1",   "CM000663.1",  "NC_000001.10"),
             ("chrY",   "CM000686.1",  "NC_000024.9")]
 
 refSeq2Hg19 = dict([(r, h) for (h, g, r) in hg19Data])
+hg19ToRefSeq= dict([(h, r) for (h, g, r) in hg19Data])
 
 gvarSub = re.compile("(\w+\.\d+):g\.(\d+)([ACGT])>([ACGT])$")
 gvarRpt = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)([ACGT]*)\[(\d+)\]$")

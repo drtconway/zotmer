@@ -12,6 +12,7 @@ Options:
     -a              include output for all variants, not just positive results
     -f FILENAME     read variants from a file
     -k K            value of k to use [default: 25]
+    -l              print long form results
     -g PATH         directory of FASTQ reference sequences
     -s              merge strands rather than counting them separately
     -t BEDFILE      test an index against a set of genomic regions
@@ -101,31 +102,6 @@ def mannWhitney(xs, ys):
 
     return (ux, zx, px)
 
-def kullbackLeibler(Xs, Ys):
-    m = 1 + int(0.5 + math.log(max(Xs.keys() + Ys.keys())))
-
-    xs = [0 for i in range(m)]
-    for (f, c) in Xs.items():
-        j = int(0.5 + math.log(f))
-        xs[j] += c
-    tx = float(sum(xs))
-    px = [x/tx for x in xs]
-
-    ys = [0 for i in range(m)]
-    for (f, c) in Ys.items():
-        j = int(0.5 + math.log(f))
-        ys[j] += c
-    ty = float(sum(ys))
-    py = [y/ty for y in ys]
-
-    d = 0.0
-    for (x,y) in zip(px, py):
-        if x == 0.0:
-            continue
-        assert y > 0
-        d += x * math.log(x/y)
-    return d
-
 def hist(xs):
     r = {}
     for x in xs:
@@ -133,6 +109,77 @@ def hist(xs):
             r[x] = 0
         r[x] += 1
     return r
+
+def quantiles(Xs, n):
+    N = sum(Xs.values())
+    cp = {}
+    t = 0
+    for x in sorted(Xs.keys()):
+        c = Xs[x]
+        t += Xs[x]
+        cp[x] = float(t - 1)/float(N)
+    r = [0 for i in range(n)]
+    for (x,p) in cp.items():
+        q = int(p*n)
+        r[q] = max(r[q], x)
+    x0 = 0
+    for q in range(n):
+        r[i] = max(r[i], x0)
+        x0 = r[i]
+    return r
+
+def binLog(Xs, n, w = None):
+    if w is not None:
+        (lx, ux) = w
+    else:
+        lx = min(Xs.keys())
+        ux = max(Xs.keys())
+        assert lx > 0
+
+    ly = math.log(1 + lx)
+    uy = math.log(1 + ux + 1)
+    ry = uy - ly
+    r = {}
+    for (x, c) in Xs.items():
+        y = int(n * (math.log(1 + x) - ly) / ry)
+        if y not in r:
+            r[y] = 0
+        r[y] += c
+    return r
+
+def binSqrt(Xs, n, w = None):
+    if w is not None:
+        (lx, ux) = w
+    else:
+        lx = min(Xs.keys())
+        ux = max(Xs.keys())
+        assert lx >= 0
+
+    ly = math.sqrt(lx)
+    uy = math.sqrt(ux + 1)
+    ry = uy - ly
+    r = {}
+    for (x, c) in Xs.items():
+        y = int(n * (math.sqrt(x) - ly) / ry)
+        if y not in r:
+            r[y] = 0
+        r[y] += c
+    return r
+
+def binHist(Xs, tx = None):
+    if tx is None:
+        tx = quantiles(Xs, 10)
+    r = []
+    j = 0
+    n = 0
+    for x in sorted(Xs.keys()):
+        while x > tx[j]:
+            r.append(n)
+            n = 0
+            j += 1
+        n += Xs[x]
+    return r
+
 
 def kolmogorovSmirnov(hx, hy):
     zs = list(set(hx.keys() + hy.keys()))
@@ -156,30 +203,55 @@ def kolmogorovSmirnov(hx, hy):
         dr = max(dr, py - px)
     return (dl, dr)
 
+def kullbackLeibler(Xs, Ys):
+    bs = Ys.keys()
+    bs.sort()
+
+    zx = float(sum(Xs.values()))
+    px = {}
+    for b in bs:
+        c = Xs.get(b, 0)
+        px[b] = c/zx
+
+    zy = float(sum(Ys.values()))
+    py = {}
+    for b in bs:
+        c = Ys.get(b, 0)
+        py[b] = c/zy
+
+    d = 0.0
+    for b in bs:
+        x = px[b]
+        y = py[b]
+        if x == 0.0:
+            continue
+        assert y > 0
+        d += x * math.log(x/y)
+    return d
+
 def chiSquared(Xs, Ys):
-    m = 1 + int(0.5 + math.log(max(Xs.keys() + Ys.keys())))
+    bs = Ys.keys()
+    bs.sort()
 
-    xs = [0 for i in range(m)]
-    for (f, c) in Xs.items():
-        j = int(0.5 + math.log(f))
-        xs[j] += c
-    tx = float(sum(xs))
-    px = [x/tx for x in xs]
+    zx = float(sum(Xs.values()))
+    px = {}
+    for b in bs:
+        c = Xs.get(b, 0)
+        px[b] = c/zx
 
-    ys = [0 for i in range(m)]
-    for (f, c) in Ys.items():
-        j = int(0.5 + math.log(f))
-        ys[j] += c
-    ty = float(sum(ys))
-    py = [y/ty for y in ys]
-
-    #print >> sys.stderr, [(x, y, sqr(x - y)/y) for (x, y) in zip(px, py)]
+    zy = float(sum(Ys.values()))
+    py = {}
+    for b in bs:
+        c = Ys.get(b, 0)
+        py[b] = c/zy
 
     c2 = 0.0
-    for (x,y) in zip(px, py):
-        assert y > 0
+    for b in bs:
+        x = px[b]
+        y = py[b]
+        #print '%d\t%g\t%g\t%g' % (b, x, y, sqr(x - y)/y)
         c2 += sqr(x - y)/y
-    return (c2, m)
+    return (c2, len(bs))
 
 def chiSquaredPval(x, n, lowerTail=True, logP=False):
     lp = 0
@@ -290,8 +362,8 @@ def context(k, v, sf):
 
     r = applyVariant(s, v)
 
-    wtXs = set(kmers(k, r[wt[0]:wt[1]], True))
-    mutXs = set(kmers(k, s[mut[0]:mut[1]], True))
+    wtXs = set(kmers(k, s[wt[0]:wt[1]], True))
+    mutXs = set(kmers(k, r[mut[0]:mut[1]], True))
     com = wtXs & mutXs
     wtXs -= com
     mutXs -= com
@@ -397,8 +469,8 @@ def main(argv):
                     continue
                 r = {}
                 r['hgvs'] = v['hgvs']
-                r['pos'] = [render(K, y) for y in mutYs]
-                r['neg'] = [render(K, y) for y in wtYs]
+                r['wt'] = [render(K, y) for y in wtYs]
+                r['mut'] = [render(K, y) for y in mutYs]
                 rs.append(r)
 
         with open(opts['<index>'], 'w') as f:
@@ -409,31 +481,31 @@ def main(argv):
     with open(opts['<index>']) as f:
         itms = yaml.load(f)
 
-    posIdx = {}
-    posRes = {}
-    negIdx = {}
-    negRes = {}
+    wtIdx = {}
+    wtRes = {}
+    mutIdx = {}
+    mutRes = {}
     hs = set([])
     univ = set([])
     for itm in itms:
         h = itm['hgvs']
         hs.add(h)
-        posRes[h] = {}
-        negRes[h] = {}
-        for x in itm['pos']:
+        wtRes[h] = {}
+        for x in itm['wt']:
             y = kmer(x)
             univ.add(y)
-            if y not in posIdx:
-                posIdx[y] = []
-            posIdx[y].append(h)
-            posRes[h][y] = 0
-        for x in itm['neg']:
+            if y not in wtIdx:
+                wtIdx[y] = []
+            wtIdx[y].append(h)
+            wtRes[h][y] = 0
+        mutRes[h] = {}
+        for x in itm['mut']:
             y = kmer(x)
             univ.add(y)
-            if y not in negIdx:
-                negIdx[y] = []
-            negIdx[y].append(h)
-            negRes[h][y] = 0
+            if y not in mutIdx:
+                mutIdx[y] = []
+            mutIdx[y].append(h)
+            mutRes[h][y] = 0
 
     if opts['-t']:
         d = "."
@@ -475,44 +547,44 @@ def main(argv):
                                 kx[x] += 1
 
         for h in hs:
-            xs = posRes[h].keys()
-            posHist = {}
+            xs = wtRes[h].keys()
+            wtHist = {}
             for x in xs:
                 c = kx.get(x, 0)
-                if c not in posHist:
-                    posHist[c] = 0
-                posHist[c] += 1
-            ys = negRes[h].keys()
-            negHist = {}
+                if c not in wtHist:
+                    wtHist[c] = 0
+                wtHist[c] += 1
+            wtU = wtHist.get(1, 0)
+            wtT = float(sum(wtHist.values()))
+            wtT = max(1.0, wtT)
+            wtAvg = 0.0
+            ys = mutRes[h].keys()
+            mutHist = {}
             for y in ys:
                 c = kx.get(y, 0)
-                if c not in negHist:
-                    negHist[c] = 0
-                negHist[c] += 1
-            posU = posHist.get(1, 0)
-            posT = float(sum(posHist.values()))
-            posT = max(1.0, posT)
-            posAvg = 0.0
-            for (c,f) in posHist.items():
-                posAvg += c*f
-            posAvg /= float(sum(posHist.values()))
-            negU = negHist.get(1, 0)
-            negT = float(sum(negHist.values()))
-            negT = max(1.0, negT)
-            negAvg = 0.0
-            for (c,f) in negHist.items():
-                negAvg += c*f
-            negAvg /= float(sum(negHist.values()))
+                if c not in mutHist:
+                    mutHist[c] = 0
+                mutHist[c] += 1
+            for (c,f) in wtHist.items():
+                wtAvg += c*f
+            wtAvg /= float(sum(wtHist.values()))
+            mutU = mutHist.get(1, 0)
+            mutT = float(sum(mutHist.values()))
+            mutT = max(1.0, mutT)
+            mutAvg = 0.0
+            for (c,f) in mutHist.items():
+                mutAvg += c*f
+            mutAvg /= float(sum(mutHist.values()))
             if opts['-v']:
-                hh = set(posHist.keys() + negHist.keys())
+                hh = set(mutHist.keys() + wtHist.keys())
                 hh = list(hh)
                 hh.sort()
                 for k in hh:
-                    pc = posHist.get(k, 0)
-                    nc = negHist.get(k, 0)
-                    print '%s\t%g\t%g\t%g\t%g\t%d\t%d\t%d' % (h, posU/posT, posAvg, negU/negT, negAvg, k, pc, nc)
+                    pc = mutHist.get(k, 0)
+                    nc = wtHist.get(k, 0)
+                    print '%s\t%g\t%g\t%g\t%g\t%d\t%d\t%d' % (h, mutU/mutT, mutAvg, wtU/wtT, wtAvg, k, pc, nc)
             else:
-                print '%s\t%g\t%g\t%g\t%g' % (h, posU/posT, posAvg, negU/negT, negAvg)
+                print '%s\t%g\t%g\t%g\t%g' % (h, mutU/mutT, mutAvg, wtU/wtT, wtAvg)
 
         return
 
@@ -544,115 +616,102 @@ def main(argv):
 
     #trim(K, kx)
 
-    zh = {}
+    B = 10
+
+    zh0 = {}
     for (x, c) in kx.iteritems():
-        if c not in zh:
-            zh[c] = 0
-        zh[c] += 1
-        if x in posIdx:
-            for h in posIdx[x]:
-                posRes[h][x] = c
-        if x in negIdx:
-            for h in negIdx[x]:
-                negRes[h][x] = c
+        if c not in zh0:
+            zh0[c] = 0
+        zh0[c] += 1
+        if x in wtIdx:
+            for h in wtIdx[x]:
+                wtRes[h][x] = c
+        if x in mutIdx:
+            for h in mutIdx[x]:
+                mutRes[h][x] = c
     nz = float(len(kx))
+    zz = (0, max(zh0.keys()))
+    zh = binLog(zh0, B, zz)
+    zp = [zh[b]/float(nz) for b in sorted(zh.keys())]
 
-    if True:
-        for h in hs:
-            xs = [max(1, x) for x in posRes[h].values()]
-            nx = float(len(xs))
-            xh = hist(xs)
-            ys = [max(1, y) for y in negRes[h].values()]
-            ny = float(len(ys))
-            yh = hist(ys)
+    hdrShown = False
 
-            (posD, posDF) = chiSquared(xh, zh)
-            (negD, negDF) = chiSquared(yh, zh)
-            posP = chiSquaredPval(posD, posDF, lowerTail=False)
-            negP = chiSquaredPval(negD, negDF, lowerTail=False)
-            #print >> sys.stderr, h, posD, posDF, posP, sorted(xh.items())
-            #print >> sys.stderr, h, negD, negDF, negP, sorted(yh.items())
+    for h in hs:
+        hdrs = ['hgvs']
+        fmts = ['%s']
+        outs = [h]
 
-            if opts['-v']:
-                vx = {}
-                for (c,f) in zh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][0] = f
-                for (c,f) in xh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][1] = f
-                for (c,f) in yh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][2] = f
-                vx = vx.items()
-                vx.sort()
-                tx = [0, 0, 0]
-                for i in xrange(len(vx)):
-                    (c, fs) = vx[i]
-                    tx[0] += fs[0]
-                    tx[1] += fs[1]
-                    tx[2] += fs[2]
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posD, negD, posP, negP)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posD, negD, posP, negP)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posD, negD, posP, negP)
-            elif opts['-a']:
-                print '%s\t%g\t%g\t%g\t%g' % (h, posD, negD, posP, negP)
-            sys.stdout.flush()
+        xs = [x for x in wtRes[h].values()]
+        nx = float(len(xs))
+        xh0 = hist(xs)
+        xh = binLog(xh0, B, zz)
+        (wtD, wtDF) = chiSquared(xh, zh)
+        wtP = chiSquaredPval(wtD, wtDF, lowerTail=False)
 
-    if False:
-        for h in hs:
-            xs = posRes[h].values()
-            nx = float(len(xs))
-            xh = hist(xs)
-            ys = negRes[h].values()
-            ny = float(len(ys))
-            yh = hist(ys)
+        ys = [y for y in mutRes[h].values()]
+        ny = float(len(ys))
+        yh0 = hist(ys)
+        yh = binLog(yh0, B, zz)
+        (mutD, mutDF) = chiSquared(yh, zh)
+        mutP = chiSquaredPval(mutD, mutDF, lowerTail=False)
 
-            alpha = 0.05
+        if True:
+            hdrs += ['wtChi2', 'mutChi2', 'chi2DF', 'wtPval', 'mutPval']
+            fmts += ['%g', '%g', '%d', '%g', '%g']
+            outs += [wtD, mutD, mutDF, wtP, mutP]
 
-            (_posL, posR) = kolmogorovSmirnov(xh, zh)
-            posW = math.sqrt((nx + nz)/(nx*nz))
-            posC = math.sqrt(-0.5*math.log(alpha/2.0)) * posW
-            posA = posR / posC
 
-            (_negL, negR) = kolmogorovSmirnov(yh, zh)
-            negW = math.sqrt((ny + nz)/(ny*nz))
-            negC = math.sqrt(-0.5*math.log(alpha/2.0)) * negW
-            negA = negR / negC
+        if True:
+            wtKL = kullbackLeibler(xh, zh)
+            mutKL = kullbackLeibler(yh, zh)
 
-            if opts['-v'] and (opts['-a'] or posA > 1.0 or negA > 1.0):
-                vx = {}
-                for (c,f) in zh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][0] = f
-                for (c,f) in xh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][1] = f
-                for (c,f) in yh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][2] = f
-                vx = vx.items()
-                vx.sort()
-                tx = [0, 0, 0]
-                for i in xrange(len(vx)):
-                    (c, fs) = vx[i]
-                    tx[0] += fs[0]
-                    tx[1] += fs[1]
-                    tx[2] += fs[2]
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Glo', fs[0], tx[0]/nz, posR, negR, posC, negC, posA, negA)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Pos', fs[1], tx[1]/nx, posR, negR, posC, negC, posA, negA)
-                    print '%s\t%d\t%s\t%d\t%g\t%g\t%g\t%g\t%g\t%g\t%g' % (h, c, 'Neg', fs[2], tx[2]/ny, posR, negR, posC, negC, posA, negA)
-            elif opts['-a']:
-                print '%s\t%g\t%g\t%g\t%g\t%g\t%g' % (h, posR, negR, posC, negC, posA, negA)
-            elif posA > 1.0:
-                print '%s\t%g\t%g\t%g\t%g\t%g\t%g' % (h, posR, negR, posC, negC, posA, negA)
-            sys.stdout.flush()
+            hdrs += ['wtKL', 'mutKL']
+            fmts += ['%g', '%g']
+            outs += [wtKL, mutKL]
+
+        if True:
+            wtKS = kolmogorovSmirnov(xh, zh)[1]
+            mutKS = kolmogorovSmirnov(yh, zh)[1]
+
+            hdrs += ['wtKS', 'mutKS']
+            fmts += ['%g', '%g']
+            outs += [wtKS, mutKS]
+
+        if opts['-l']:
+            vx = {}
+            #for (c,f) in zh0.iteritems():
+            #    if c not in vx:
+            #        vx[c] = [0, 0, 0]
+            #    vx[c][0] = f
+            for (c,f) in xh0.iteritems():
+                if c not in vx:
+                    vx[c] = [0, 0, 0]
+                vx[c][1] = f
+            for (c,f) in yh0.iteritems():
+                if c not in vx:
+                    vx[c] = [0, 0, 0]
+                vx[c][2] = f
+            vx = vx.items()
+            vx.sort()
+            tx = [0, 0, 0]
+            for i in xrange(len(vx)):
+                (c, fs) = vx[i]
+                tx[0] += fs[0]
+                tx[1] += fs[1]
+                tx[2] += fs[2]
+                hdrs1 = hdrs + ['coverage', 'wtCnt', 'wtCum', 'mutCnt', 'mutCum']
+                fmts1 = fmts + ['%d', '%d', '%g', '%d', '%g']
+                outs1 = outs + [c, fs[1], tx[1]/nx, fs[2], tx[2]/ny]
+                if not hdrShown:
+                    hdrShown = True
+                    print '\t'.join(hdrs1)
+                print '\t'.join(fmts1) % tuple(outs1)
+        elif opts['-a']:
+            if not hdrShown:
+                hdrShown = True
+                print '\t'.join(hdrs)
+            print '\t'.join(fmts) % tuple(outs)
+        sys.stdout.flush()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
