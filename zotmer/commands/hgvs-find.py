@@ -10,6 +10,7 @@ Options:
     -R              report the ambiguity associated with a variant
     -X              index HGVS variants
     -a              include output for all variants, not just positive results
+    -e              estimate cutoffs for KL statistic
     -f FILENAME     read variants from a file
     -k K            value of k to use [default: 25]
     -l              print long form results
@@ -30,7 +31,7 @@ from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, kmersWithPo
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
-from pykmer.stats import logGammaP, logGammaQ
+from pykmer.stats import logGammaP, logGammaQ, logLowerGamma
 from zotmer.library.hgvs import applyVariant, parseHGVS, refSeq2Hg19
 from zotmer.library.files import readKmersAndCounts
 from zotmer.library.rope import rope
@@ -228,6 +229,35 @@ def kullbackLeibler(Xs, Ys):
         assert y > 0
         d += x * math.log(x/y)
     return d
+
+def estimateGamma(xs):
+    N = float(len(xs))
+    s = math.log(sum(xs)/N) - sum([math.log(x) for x in xs])/N
+    k = (3 - s + math.sqrt(sqr(s - 3) + 24*s)) / (12*s)
+    t = sum(xs) / (k*N)
+    return (k, t)
+
+def estimateGammaCutoff(xs, p):
+    (k, t) = estimateGamma(xs)
+    print >> sys.stderr, 'estimated gamma parameters: %g\t%g' % (k, t)
+
+    gk = math.lgamma(k)
+
+    p = math.log(p)
+
+    xl = 1e-100
+    xh = max(xs) + 1
+    for i in xrange(20):
+        x = (xh + xl) / 2.0
+        q = logLowerGamma(k, x/t) - gk
+        #print '(%g, %g)\t%g\t%g\t%g' % (xl, xh, x, q, p)
+        if q > p:
+            xh = x
+        elif q < p:
+            xl = x
+        else:
+            break
+    return x
 
 def chiSquared(Xs, Ys):
     bs = Ys.keys()
@@ -636,6 +666,8 @@ def main(argv):
 
     hdrShown = False
 
+    kls = []
+
     for h in hs:
         hdrs = ['hgvs']
         fmts = ['%s']
@@ -665,6 +697,8 @@ def main(argv):
             wtKL = kullbackLeibler(xh, zh)
             mutKL = kullbackLeibler(yh, zh)
 
+            kls += [wtKL, mutKL]
+
             hdrs += ['wtKL', 'mutKL']
             fmts += ['%g', '%g']
             outs += [wtKL, mutKL]
@@ -677,7 +711,7 @@ def main(argv):
             fmts += ['%g', '%g']
             outs += [wtKS, mutKS]
 
-        if opts['-l']:
+        if not opts['-e'] and opts['-l']:
             vx = {}
             #for (c,f) in zh0.iteritems():
             #    if c not in vx:
@@ -706,12 +740,24 @@ def main(argv):
                     hdrShown = True
                     print '\t'.join(hdrs1)
                 print '\t'.join(fmts1) % tuple(outs1)
-        elif opts['-a']:
+        elif not opts['-e'] and opts['-a']:
             if not hdrShown:
                 hdrShown = True
                 print '\t'.join(hdrs)
             print '\t'.join(fmts) % tuple(outs)
         sys.stdout.flush()
+
+    if opts['-e']:
+        kls.sort()
+        m = len(kls) // 2
+        p = 0.01
+        negCut = estimateGammaCutoff(kls[:m], 1-p)
+        posCut = estimateGammaCutoff(kls[m:], p)
+        if opts['-v']:
+            print 'estimated cutoff to reject a negative call at p < %g is %g' % (p, negCut)
+            print 'estimated cutoff to reject a positive call at p < %g is %g' % (p, posCut)
+        else:
+            print p, negCut, posCut
 
 if __name__ == '__main__':
     main(sys.argv[1:])
