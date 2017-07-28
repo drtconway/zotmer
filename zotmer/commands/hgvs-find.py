@@ -10,14 +10,27 @@ Options:
     -R              report the ambiguity associated with a variant
     -X              index HGVS variants
     -a              include output for all variants, not just positive results
-    -e              estimate cutoffs for KL statistic
     -f FILENAME     read variants from a file
+    -F FORMAT       a format string for printing results [default: kl]
     -k K            value of k to use [default: 25]
-    -l              print long form results
     -g PATH         directory of FASTQ reference sequences
     -s              merge strands rather than counting them separately
     -t BEDFILE      test an index against a set of genomic regions
     -v              produce verbose output
+
+Format Strings
+
+Format strings control the fields that get included in the output.
+The value is a comma separated list. The order of fields is fixed,
+so the order in the format string is irrelevant.  The supported
+fields are:
+
+    chi2            Chi2 statistics
+    kl              Kullback-Leibler statistics
+    ks              Kolmogorov-Smirnov statistics
+    hist            Print long format results with the histograms
+    glo             Include global frequency counts in long format results
+
 """
 
 import array
@@ -62,6 +75,53 @@ def lcp(xs):
             i += 1
         z = z[:i]
     return z
+
+class summarizer(object):
+    def __init__(self):
+        self.n = 0
+        self.s = 0
+        self.s2 = 0
+
+    def add(self, x):
+        self.n += 1
+        self.s += x
+        self.s2 += x * x
+
+    def mean(self):
+        return float(self.s)/float(self.n)
+
+    def var(self):
+        m = self.mean()
+        return float(self.s2)/float(self.n) - m*m
+
+    def sd(self):
+        return math.sqrt(self.var())
+
+def computeBias(K, zs, verbose = False):
+    S = summarizer()
+    for (x, xc) in zs.iteritems():
+        y = rc(K, x)
+        if y < x:
+            continue
+        yc = zs.get(y, 0)
+
+        #xh = murmer(x, 17)
+        #yh = murmer(y, 17)
+        if xc > yc:
+            a = xc
+            b = yc
+        else:
+            a = yc
+            b = xc
+        apb = a + b
+        if apb > 0:
+            v = float(a) / float(apb)
+        else:
+            v = 0.5
+        if verbose:
+            print '%s\t%s\t%d\t%d\t%g' % (render(K, x), render(K, y), xc, yc, v)
+        S.add(v)
+    return (S.mean(), S.var())
 
 def mkRnks(xs):
     zs = {}
@@ -237,6 +297,11 @@ def estimateGamma(xs):
     t = sum(xs) / (k*N)
     return (k, t)
 
+def gammaCDF(m, x):
+    (k, t) = m
+    gk = math.lgamma(k)
+    return math.exp(logLowerGamma(k, x/t) - gk)
+
 def estimateGammaCutoff(xs, p):
     (k, t) = estimateGamma(xs)
     print >> sys.stderr, 'estimated gamma parameters: %g\t%g' % (k, t)
@@ -250,7 +315,6 @@ def estimateGammaCutoff(xs, p):
     for i in xrange(20):
         x = (xh + xl) / 2.0
         q = logLowerGamma(k, x/t) - gk
-        #print '(%g, %g)\t%g\t%g\t%g' % (xl, xh, x, q, p)
         if q > p:
             xh = x
         elif q < p:
@@ -279,7 +343,6 @@ def chiSquared(Xs, Ys):
     for b in bs:
         x = px[b]
         y = py[b]
-        #print '%d\t%g\t%g\t%g' % (b, x, y, sqr(x - y)/y)
         c2 += sqr(x - y)/y
     return (c2, len(bs))
 
@@ -358,10 +421,6 @@ def context0(k, v, L, sf):
 
     r = applyVariant(s, v)
 
-    #print (' '*(L-1)) + '.'
-    #print r[wt[0]:wt[1]]
-    #print s[mut[0]:mut[1]]
-
     wtXs = kmersWithPosList(k, r[wt[0]:wt[1]], False)
     mutXs = kmersWithPosList(k, s[mut[0]:mut[1]], False)
 
@@ -404,7 +463,7 @@ def context(k, v, sf):
     mutXs = list(mutXs)
     mutXs.sort()
 
-    print '%s\t%s\t%d\t%d\t%d' % (v['hgvs'], v['type'], len(wtXs), len(mutXs), len(com))
+    #print '%s\t%s\t%d\t%d\t%d' % (v['hgvs'], v['type'], len(wtXs), len(mutXs), len(com))
     return (wtXs, mutXs)
 
 class SequenceFactory(object):
@@ -508,6 +567,11 @@ def main(argv):
 
         return
 
+    fmt = set(opts['-F'].split(','))
+
+    if opts['-v']:
+        print >> sys.stderr, "loading index."
+
     with open(opts['<index>']) as f:
         itms = yaml.load(f)
 
@@ -536,6 +600,9 @@ def main(argv):
                 mutIdx[y] = []
             mutIdx[y].append(h)
             mutRes[h][y] = 0
+
+    if opts['-v']:
+        print >> sys.stderr, "done."
 
     if opts['-t']:
         d = "."
@@ -631,7 +698,10 @@ def main(argv):
                 rn += 1
                 if (rn & M) == 0 and opts['-v']:
                     print >> sys.stderr, 'read pairs processed: %d' % (rn,)
-                xs = kmersList(K, fq1[1], combineStrands) + kmersList(K, fq2[1], combineStrands)
+                if combineStrands:
+                    xs = kmersList(K, fq1[1], True) + kmersList(K, fq2[1], True)
+                else:
+                    xs = kmersList(K, fq1[1], False) + [rc(K, x) for x in kmersList(K, fq2[1], False)]
                 found = False
                 for x in xs:
                     if x in univ:
@@ -659,14 +729,38 @@ def main(argv):
         if x in mutIdx:
             for h in mutIdx[x]:
                 mutRes[h][x] = c
-    nz = float(len(kx))
+    nz = float(sum(zh0.values()))
     zz = (0, max(zh0.keys()))
     zh = binLog(zh0, B, zz)
-    zp = [zh[b]/float(nz) for b in sorted(zh.keys())]
+
+    if 'bias' in fmt:
+        (biasMean, biasVar) = computeBias(K, kx)
+        print >> sys.stderr, 'global bias: %g\t%g' % (biasMean, biasVar)
 
     hdrShown = False
 
-    kls = []
+    if 'kl' in fmt:
+        kls = []
+        for h in hs:
+            xs = [x for x in wtRes[h].values()]
+            nx = float(len(xs))
+            xh0 = hist(xs)
+            xh = binLog(xh0, B, zz)
+
+            ys = [y for y in mutRes[h].values()]
+            ny = float(len(ys))
+            yh0 = hist(ys)
+            yh = binLog(yh0, B, zz)
+
+            wtKL = kullbackLeibler(xh, zh)
+            mutKL = kullbackLeibler(yh, zh)
+
+            kls += [wtKL, mutKL]
+        kls.sort()
+        m = len(kls) // 2
+        p = 0.01
+        negModel = estimateGamma(kls[:m])
+        posModel = estimateGamma(kls[m:])
 
     for h in hs:
         hdrs = ['hgvs']
@@ -677,33 +771,45 @@ def main(argv):
         nx = float(len(xs))
         xh0 = hist(xs)
         xh = binLog(xh0, B, zz)
-        (wtD, wtDF) = chiSquared(xh, zh)
-        wtP = chiSquaredPval(wtD, wtDF, lowerTail=False)
 
         ys = [y for y in mutRes[h].values()]
         ny = float(len(ys))
         yh0 = hist(ys)
         yh = binLog(yh0, B, zz)
-        (mutD, mutDF) = chiSquared(yh, zh)
-        mutP = chiSquaredPval(mutD, mutDF, lowerTail=False)
 
-        if True:
+        if 'bias' in fmt:
+            (wtBm, wtBv) = computeBias(K, wtRes[h], True)
+            hdrs += ['wtBiasMean', 'wtBiasVar']
+            fmts += ['%g', '%g']
+            outs += [wtBm, wtBv]
+            (mutBm, mutBv) = computeBias(K, mutRes[h])
+            hdrs += ['mutBiasMean', 'mutBiasVar']
+            fmts += ['%g', '%g']
+            outs += [mutBm, mutBv]
+
+        if 'chi2' in fmt:
+            (wtD, wtDF) = chiSquared(xh, zh)
+            wtP = chiSquaredPval(wtD, wtDF, lowerTail=False)
+            (mutD, mutDF) = chiSquared(yh, zh)
+            mutP = chiSquaredPval(mutD, mutDF, lowerTail=False)
             hdrs += ['wtChi2', 'mutChi2', 'chi2DF', 'wtPval', 'mutPval']
             fmts += ['%g', '%g', '%d', '%g', '%g']
             outs += [wtD, mutD, mutDF, wtP, mutP]
 
 
-        if True:
+        if 'kl' in fmt:
             wtKL = kullbackLeibler(xh, zh)
+            wtKLPn = max(0.0, 1 - gammaCDF(negModel, wtKL))
+            wtKLPp = gammaCDF(posModel, wtKL)
             mutKL = kullbackLeibler(yh, zh)
+            mutKLPn = max(0.0, 1 - gammaCDF(negModel, mutKL))
+            mutKLPp = gammaCDF(posModel, mutKL)
 
-            kls += [wtKL, mutKL]
+            hdrs += ['wtKL', 'mutKL', 'wtKLPn', 'wtKLPp', 'mutKLPn', 'mutKLPp']
+            fmts += ['%g', '%g', '%g', '%g', '%g', '%g']
+            outs += [wtKL, mutKL, wtKLPn, wtKLPp, mutKLPn, mutKLPp]
 
-            hdrs += ['wtKL', 'mutKL']
-            fmts += ['%g', '%g']
-            outs += [wtKL, mutKL]
-
-        if True:
+        if 'ks' in fmt:
             wtKS = kolmogorovSmirnov(xh, zh)[1]
             mutKS = kolmogorovSmirnov(yh, zh)[1]
 
@@ -711,12 +817,13 @@ def main(argv):
             fmts += ['%g', '%g']
             outs += [wtKS, mutKS]
 
-        if not opts['-e'] and opts['-l']:
+        if 'hist' in fmt:
             vx = {}
-            #for (c,f) in zh0.iteritems():
-            #    if c not in vx:
-            #        vx[c] = [0, 0, 0]
-            #    vx[c][0] = f
+            if 'glo' in fmt:
+                for (c,f) in zh0.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][0] = f
             for (c,f) in xh0.iteritems():
                 if c not in vx:
                     vx[c] = [0, 0, 0]
@@ -736,28 +843,20 @@ def main(argv):
                 hdrs1 = hdrs + ['coverage', 'wtCnt', 'wtCum', 'mutCnt', 'mutCum']
                 fmts1 = fmts + ['%d', '%d', '%g', '%d', '%g']
                 outs1 = outs + [c, fs[1], tx[1]/nx, fs[2], tx[2]/ny]
+                if 'glo' in fmt:
+                    hdrs1 += ['gloCnt', 'gloCum']
+                    fmts1 += ['%d', '%g']
+                    outs1 += [fs[0], tx[0]/nz]
                 if not hdrShown:
                     hdrShown = True
                     print '\t'.join(hdrs1)
                 print '\t'.join(fmts1) % tuple(outs1)
-        elif not opts['-e'] and opts['-a']:
+        else:
             if not hdrShown:
                 hdrShown = True
                 print '\t'.join(hdrs)
             print '\t'.join(fmts) % tuple(outs)
         sys.stdout.flush()
-
-    if opts['-e']:
-        kls.sort()
-        m = len(kls) // 2
-        p = 0.01
-        negCut = estimateGammaCutoff(kls[:m], 1-p)
-        posCut = estimateGammaCutoff(kls[m:], p)
-        if opts['-v']:
-            print 'estimated cutoff to reject a negative call at p < %g is %g' % (p, negCut)
-            print 'estimated cutoff to reject a positive call at p < %g is %g' % (p, posCut)
-        else:
-            print p, negCut, posCut
 
 if __name__ == '__main__':
     main(sys.argv[1:])
