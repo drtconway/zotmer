@@ -297,6 +297,12 @@ def estimateGamma(xs):
     t = sum(xs) / (k*N)
     return (k, t)
 
+def gammaPDF(m, x):
+    (k, t) = m
+    num = math.log(x) * (k - 1) - x/t
+    den = math.lgamma(k) + k * math.log(t)
+    return math.exp(num - den)
+
 def gammaCDF(m, x):
     (k, t) = m
     gk = math.lgamma(k)
@@ -373,20 +379,13 @@ def both(xs, ys):
         except StopIteration:
             return
 
-def neigh(K, x, d):
-    if d == 0:
-        return
-
+def neigh(K, x):
+    r = []
     for j in xrange(K):
         for y in [1,2,3]:
             z = x ^ (y << (2*j))
-            if d == 1:
-                yield z
-            else:
-                for w in neigh(K, z, d - 1):
-                    if ham(x, w) == d:
-                        yield w
-
+            r.append(z)
+    return r
 
 def ball(K, xs, d):
     ys = set(xs)
@@ -575,9 +574,7 @@ def main(argv):
     with open(opts['<index>']) as f:
         itms = yaml.load(f)
 
-    wtIdx = {}
     wtRes = {}
-    mutIdx = {}
     mutRes = {}
     hs = set([])
     univ = set([])
@@ -588,17 +585,11 @@ def main(argv):
         for x in itm['wt']:
             y = kmer(x)
             univ.add(y)
-            if y not in wtIdx:
-                wtIdx[y] = []
-            wtIdx[y].append(h)
             wtRes[h][y] = 0
         mutRes[h] = {}
         for x in itm['mut']:
             y = kmer(x)
             univ.add(y)
-            if y not in mutIdx:
-                mutIdx[y] = []
-            mutIdx[y].append(h)
             mutRes[h][y] = 0
 
     if opts['-v']:
@@ -723,15 +714,44 @@ def main(argv):
         if c not in zh0:
             zh0[c] = 0
         zh0[c] += 1
-        if x in wtIdx:
-            for h in wtIdx[x]:
-                wtRes[h][x] = c
-        if x in mutIdx:
-            for h in mutIdx[x]:
-                mutRes[h][x] = c
     nz = float(sum(zh0.values()))
     zz = (0, max(zh0.keys()))
     zh = binLog(zh0, B, zz)
+
+    # Now go through the res sets and try and fill in missing k-mers
+    for h in hs:
+        wtXs = wtRes[h]
+        mutXs = mutRes[h]
+        for x in wtXs.keys():
+            if x in kx:
+                wtXs[x] = kx[x]
+            else:
+                x0 = x
+                c0 = 0
+                for y in neigh(K, x):
+                    if y in kx and y not in mutXs:
+                        c1 = kx[y]
+                        if c1 > c0:
+                            x0 = y
+                            c0 = c1
+                wtXs[x0] = c0
+                if c0 > 0:
+                    print >> sys.stderr, '%s\twt\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
+        for x in mutXs.keys():
+            if x in kx:
+                mutXs[x] = kx[x]
+            else:
+                x0 = x
+                c0 = 0
+                for y in neigh(K, x):
+                    if y in kx and y not in wtXs:
+                        c1 = kx[y]
+                        if c1 > c0:
+                            x0 = y
+                            c0 = c1
+                mutXs[x0] = c0
+                if c0 > 0:
+                    print >> sys.stderr, '%s\tmut\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
 
     if 'bias' in fmt:
         (biasMean, biasVar) = computeBias(K, kx)
@@ -805,9 +825,12 @@ def main(argv):
             mutKLPn = max(0.0, 1 - gammaCDF(negModel, mutKL))
             mutKLPp = gammaCDF(posModel, mutKL)
 
-            hdrs += ['wtKL', 'mutKL', 'wtKLPn', 'wtKLPp', 'mutKLPn', 'mutKLPp']
-            fmts += ['%g', '%g', '%g', '%g', '%g', '%g']
-            outs += [wtKL, mutKL, wtKLPn, wtKLPp, mutKLPn, mutKLPp]
+            wtOR = gammaPDF(negModel, wtKL) / gammaPDF(posModel, wtKL)
+            mutOR = gammaPDF(negModel, mutKL) / gammaPDF(posModel, mutKL)
+
+            hdrs += ['wtKL', 'mutKL', 'wtKLPn', 'wtKLPp', 'mutKLPn', 'mutKLPp', 'wtOR', 'mutOR']
+            fmts += ['%g', '%g', '%g', '%g', '%g', '%g', '%g', '%g']
+            outs += [wtKL, mutKL, wtKLPn, wtKLPp, mutKLPn, mutKLPp, wtOR, mutOR]
 
         if 'ks' in fmt:
             wtKS = kolmogorovSmirnov(xh, zh)[1]
