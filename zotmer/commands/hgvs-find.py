@@ -734,7 +734,7 @@ def main(argv):
                         if c1 > c0:
                             x0 = y
                             c0 = c1
-                wtXs[x0] = c0
+                wtXs[x] = c0
                 if c0 > 0:
                     print >> sys.stderr, '%s\twt\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
         for x in mutXs.keys():
@@ -749,7 +749,7 @@ def main(argv):
                         if c1 > c0:
                             x0 = y
                             c0 = c1
-                mutXs[x0] = c0
+                mutXs[x] = c0
                 if c0 > 0:
                     print >> sys.stderr, '%s\tmut\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
 
