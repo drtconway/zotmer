@@ -14,7 +14,7 @@ Options:
     -F FORMAT       a format string for printing results [default: kl]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
-    -s              merge strands rather than counting them separately
+    -s              single stranded k-mer extraction
     -t BEDFILE      test an index against a set of genomic regions
     -v              produce verbose output
 
@@ -676,9 +676,9 @@ def main(argv):
 
         return
 
-    combineStrands = False
+    combineStrands = True
     if opts['-s']:
-        combineStrands = True
+        combineStrands = False
 
     kx = {}
     rn = 0
