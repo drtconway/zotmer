@@ -9,9 +9,10 @@ Usage:
 Options:
     -R              report the ambiguity associated with a variant
     -X              index HGVS variants
-    -a              include output for all variants, not just positive results
+    -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.01]
+    -B BINFUNC      binning function to use [default: none]
     -f FILENAME     read variants from a file
-    -F FORMAT       a format string for printing results [default: kl]
+    -F FORMAT       a format string for printing results [default: ks]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -s              single stranded k-mer extraction
@@ -171,7 +172,7 @@ def hist(xs):
         r[x] += 1
     return r
 
-def quantiles(Xs, n):
+def histQuantiles(Xs, n):
     N = sum(Xs.values())
     cp = {}
     t = 0
@@ -189,39 +190,19 @@ def quantiles(Xs, n):
         x0 = r[i]
     return r
 
-def binLog(Xs, n, w = None):
-    if w is not None:
-        (lx, ux) = w
-    else:
-        lx = min(Xs.keys())
-        ux = max(Xs.keys())
-        assert lx > 0
-
-    ly = math.log(1 + lx)
-    uy = math.log(1 + ux + 1)
-    ry = uy - ly
+def binLog(Xs):
     r = {}
     for (x, c) in Xs.items():
-        y = int(n * (math.log(1 + x) - ly) / ry)
+        y = int(math.log(1+x))
         if y not in r:
             r[y] = 0
         r[y] += c
     return r
 
-def binSqrt(Xs, n, w = None):
-    if w is not None:
-        (lx, ux) = w
-    else:
-        lx = min(Xs.keys())
-        ux = max(Xs.keys())
-        assert lx >= 0
-
-    ly = math.sqrt(lx)
-    uy = math.sqrt(ux + 1)
-    ry = uy - ly
+def binSqrt(Xs):
     r = {}
     for (x, c) in Xs.items():
-        y = int(n * (math.sqrt(x) - ly) / ry)
+        y = int(math.sqrt(x))
         if y not in r:
             r[y] = 0
         r[y] += c
@@ -229,18 +210,11 @@ def binSqrt(Xs, n, w = None):
 
 def binHist(Xs, tx = None):
     if tx is None:
-        tx = quantiles(Xs, 10)
-    r = []
-    j = 0
-    n = 0
-    for x in sorted(Xs.keys()):
-        while x > tx[j]:
-            r.append(n)
-            n = 0
-            j += 1
-        n += Xs[x]
-    return r
-
+        return Xs
+    if tx == 'log':
+        return binLog(Xs)
+    if tx == 'sqrt':
+        return binSqrt(Xs)
 
 def kolmogorovSmirnov(hx, hy):
     zs = list(set(hx.keys() + hy.keys()))
@@ -269,12 +243,14 @@ def kullbackLeibler(Xs, Ys):
     bs.sort()
 
     zx = float(sum(Xs.values()))
+    zx = max(1.0, zx)
     px = {}
     for b in bs:
         c = Xs.get(b, 0)
         px[b] = c/zx
 
     zy = float(sum(Ys.values()))
+    zy = max(1.0, zy)
     py = {}
     for b in bs:
         c = Ys.get(b, 0)
@@ -705,18 +681,16 @@ def main(argv):
                         kx[x] = 0
                     kx[x] += 1
 
-    #trim(K, kx)
-
     B = 10
+    S = 2
 
     zh0 = {}
     for (x, c) in kx.iteritems():
         if c not in zh0:
             zh0[c] = 0
         zh0[c] += 1
-    nz = float(sum(zh0.values()))
-    zz = (0, max(zh0.keys()))
-    zh = binLog(zh0, B, zz)
+    zh = binHist(zh0, opts['-B'])
+    nz = float(sum(zh.values()))
 
     # Now go through the res sets and try and fill in missing k-mers
     for h in hs:
@@ -734,7 +708,7 @@ def main(argv):
                         if c1 > c0:
                             x0 = y
                             c0 = c1
-                wtXs[x] = c0
+                wtXs[x] = 1 + c0
                 if c0 > 0:
                     print >> sys.stderr, '%s\twt\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
         for x in mutXs.keys():
@@ -749,7 +723,7 @@ def main(argv):
                         if c1 > c0:
                             x0 = y
                             c0 = c1
-                mutXs[x] = c0
+                mutXs[x] = 1 + c0
                 if c0 > 0:
                     print >> sys.stderr, '%s\tmut\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
 
@@ -759,23 +733,29 @@ def main(argv):
 
     hdrShown = False
 
+    alpha = float(opts['-A'])
+    cAlpha = math.sqrt(-0.5*math.log(0.5*alpha))
+
     if 'kl' in fmt:
         kls = []
         for h in hs:
             xs = [x for x in wtRes[h].values()]
             nx = float(len(xs))
             xh0 = hist(xs)
-            xh = binLog(xh0, B, zz)
+            xh = binHist(xh0, opts['-B'])
 
             ys = [y for y in mutRes[h].values()]
             ny = float(len(ys))
             yh0 = hist(ys)
-            yh = binLog(yh0, B, zz)
+            yh = binHist(yh0, opts['-B'])
 
             wtKL = kullbackLeibler(xh, zh)
             mutKL = kullbackLeibler(yh, zh)
 
-            kls += [wtKL, mutKL]
+            if wtKL > 0:
+                kls.append(wtKL)
+            if mutKL > 0:
+                kls.append(mutKL)
         kls.sort()
         m = len(kls) // 2
         p = 0.01
@@ -790,12 +770,12 @@ def main(argv):
         xs = [x for x in wtRes[h].values()]
         nx = float(len(xs))
         xh0 = hist(xs)
-        xh = binLog(xh0, B, zz)
+        xh = binHist(xh0, opts['-B'])
 
         ys = [y for y in mutRes[h].values()]
         ny = float(len(ys))
         yh0 = hist(ys)
-        yh = binLog(yh0, B, zz)
+        yh = binHist(yh0, opts['-B'])
 
         if 'bias' in fmt:
             (wtBm, wtBv) = computeBias(K, wtRes[h], True)
@@ -812,21 +792,23 @@ def main(argv):
             wtP = chiSquaredPval(wtD, wtDF, lowerTail=False)
             (mutD, mutDF) = chiSquared(yh, zh)
             mutP = chiSquaredPval(mutD, mutDF, lowerTail=False)
+
             hdrs += ['wtChi2', 'mutChi2', 'chi2DF', 'wtPval', 'mutPval']
             fmts += ['%g', '%g', '%d', '%g', '%g']
             outs += [wtD, mutD, mutDF, wtP, mutP]
 
-
         if 'kl' in fmt:
             wtKL = kullbackLeibler(xh, zh)
-            wtKLPn = max(0.0, 1 - gammaCDF(negModel, wtKL))
-            wtKLPp = gammaCDF(posModel, wtKL)
+            wtKLa = max(0.01, wtKL)
+            wtKLPn = max(0.0, 1 - gammaCDF(negModel, wtKLa))
+            wtKLPp = gammaCDF(posModel, wtKLa)
             mutKL = kullbackLeibler(yh, zh)
-            mutKLPn = max(0.0, 1 - gammaCDF(negModel, mutKL))
-            mutKLPp = gammaCDF(posModel, mutKL)
+            mutKLa = max(0.01, mutKL)
+            mutKLPn = max(0.0, 1 - gammaCDF(negModel, mutKLa))
+            mutKLPp = gammaCDF(posModel, mutKLa)
 
-            wtOR = gammaPDF(negModel, wtKL) / gammaPDF(posModel, wtKL)
-            mutOR = gammaPDF(negModel, mutKL) / gammaPDF(posModel, mutKL)
+            wtOR = gammaPDF(negModel, wtKLa) / gammaPDF(posModel, wtKLa)
+            mutOR = gammaPDF(negModel, mutKLa) / gammaPDF(posModel, mutKLa)
 
             hdrs += ['wtKL', 'mutKL', 'wtKLPn', 'wtKLPp', 'mutKLPn', 'mutKLPp', 'wtOR', 'mutOR']
             fmts += ['%g', '%g', '%g', '%g', '%g', '%g', '%g', '%g']
@@ -835,26 +817,44 @@ def main(argv):
         if 'ks' in fmt:
             wtKS = kolmogorovSmirnov(xh, zh)[1]
             mutKS = kolmogorovSmirnov(yh, zh)[1]
+    
+            wtD = cAlpha * math.sqrt((nx + nz)/(nx * nz))
+            mutD = cAlpha * math.sqrt((ny + nz)/(ny * nz))
 
-            hdrs += ['wtKS', 'mutKS']
-            fmts += ['%g', '%g']
-            outs += [wtKS, mutKS]
+            hdrs += ['wtKS', 'mutKS', 'wtD', 'mutD']
+            fmts += ['%g', '%g', '%g', '%g']
+            outs += [wtKS, mutKS, wtD, mutD]
 
         if 'hist' in fmt:
             vx = {}
-            if 'glo' in fmt:
-                for (c,f) in zh0.iteritems():
+            if 'bin' in fmt:
+                if 'glo' in fmt:
+                    for (c,f) in zh.iteritems():
+                        if c not in vx:
+                            vx[c] = [0, 0, 0]
+                        vx[c][0] = f
+                for (c,f) in xh.iteritems():
                     if c not in vx:
                         vx[c] = [0, 0, 0]
-                    vx[c][0] = f
-            for (c,f) in xh0.iteritems():
-                if c not in vx:
-                    vx[c] = [0, 0, 0]
-                vx[c][1] = f
-            for (c,f) in yh0.iteritems():
-                if c not in vx:
-                    vx[c] = [0, 0, 0]
-                vx[c][2] = f
+                    vx[c][1] = f
+                for (c,f) in yh.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][2] = f
+            else:
+                if 'glo' in fmt:
+                    for (c,f) in zh0.iteritems():
+                        if c not in vx:
+                            vx[c] = [0, 0, 0]
+                        vx[c][0] = f
+                for (c,f) in xh0.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][1] = f
+                for (c,f) in yh0.iteritems():
+                    if c not in vx:
+                        vx[c] = [0, 0, 0]
+                    vx[c][2] = f
             vx = vx.items()
             vx.sort()
             tx = [0, 0, 0]
