@@ -11,6 +11,7 @@ Options:
     -X              index HGVS variants
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.01]
     -B BINFUNC      binning function to use [default: none]
+    -S SCALE        scaling factor for binning function [default: 1.0]
     -f FILENAME     read variants from a file
     -F FORMAT       a format string for printing results [default: ks]
     -k K            value of k to use [default: 25]
@@ -190,31 +191,40 @@ def histQuantiles(Xs, n):
         x0 = r[i]
     return r
 
-def binLog(Xs):
+def binLin(Xs, S):
     r = {}
     for (x, c) in Xs.items():
-        y = int(math.log(1+x))
+        y = int(x*S)
         if y not in r:
             r[y] = 0
         r[y] += c
     return r
 
-def binSqrt(Xs):
+def binLog(Xs, S):
     r = {}
     for (x, c) in Xs.items():
-        y = int(math.sqrt(x))
+        y = int(math.log(1+x)*S)
         if y not in r:
             r[y] = 0
         r[y] += c
     return r
 
-def binHist(Xs, tx = None):
-    if tx is None:
-        return Xs
+def binSqrt(Xs, S):
+    r = {}
+    for (x, c) in Xs.items():
+        y = int(math.sqrt(x)*S)
+        if y not in r:
+            r[y] = 0
+        r[y] += c
+    return r
+
+def binHist(Xs, tx, S):
+    if tx is 'none':
+        return binLin(Xs, S)
     if tx == 'log':
-        return binLog(Xs)
+        return binLog(Xs, S)
     if tx == 'sqrt':
-        return binSqrt(Xs)
+        return binSqrt(Xs, S)
 
 def kolmogorovSmirnov(hx, hy):
     zs = list(set(hx.keys() + hy.keys()))
@@ -681,15 +691,15 @@ def main(argv):
                         kx[x] = 0
                     kx[x] += 1
 
-    B = 10
-    S = 2
+    B = opts['-B']
+    S = float(opts['-S'])
 
     zh0 = {}
     for (x, c) in kx.iteritems():
         if c not in zh0:
             zh0[c] = 0
         zh0[c] += 1
-    zh = binHist(zh0, opts['-B'])
+    zh = binHist(zh0, B, S)
     nz = float(sum(zh.values()))
 
     # Now go through the res sets and try and fill in missing k-mers
@@ -742,12 +752,12 @@ def main(argv):
             xs = [x for x in wtRes[h].values()]
             nx = float(len(xs))
             xh0 = hist(xs)
-            xh = binHist(xh0, opts['-B'])
+            xh = binHist(xh0, B, S)
 
             ys = [y for y in mutRes[h].values()]
             ny = float(len(ys))
             yh0 = hist(ys)
-            yh = binHist(yh0, opts['-B'])
+            yh = binHist(yh0, B, S)
 
             wtKL = kullbackLeibler(xh, zh)
             mutKL = kullbackLeibler(yh, zh)
@@ -770,12 +780,12 @@ def main(argv):
         xs = [x for x in wtRes[h].values()]
         nx = float(len(xs))
         xh0 = hist(xs)
-        xh = binHist(xh0, opts['-B'])
+        xh = binHist(xh0, B, S)
 
         ys = [y for y in mutRes[h].values()]
         ny = float(len(ys))
         yh0 = hist(ys)
-        yh = binHist(yh0, opts['-B'])
+        yh = binHist(yh0, B, S)
 
         if 'bias' in fmt:
             (wtBm, wtBv) = computeBias(K, wtRes[h], True)
