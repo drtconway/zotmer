@@ -9,9 +9,10 @@ from pykmer.file import openFile
 # https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=NC_000962.3&rettype=fasta&retmode=text
 
 class entrez(object):
-    def __init__(self):
+    def __init__(self, ret = 'fasta'):
         self.base = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
         self.root = '.zot/cache'
+        self.rettype = ret
         self.compression = '.gz'
 
     def __getitem__(self, acc):
@@ -30,7 +31,7 @@ class entrez(object):
 
         qry = {}
         qry['db'] = 'nuccore'
-        qry['rettype'] = 'fasta'
+        qry['rettype'] = self.rettype
         qry['retmode'] = 'text'
         qry['id'] = acc
 

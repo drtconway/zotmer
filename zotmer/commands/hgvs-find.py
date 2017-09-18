@@ -10,8 +10,8 @@ Options:
     -R              report the ambiguity associated with a variant
     -X              index HGVS variants
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.01]
-    -B BINFUNC      binning function to use [default: none]
-    -S SCALE        scaling factor for binning function [default: 1.0]
+    -B BINFUNC      binning function to use [default: sqrt]
+    -S SCALE        scaling factor for binning function [default: 0.25]
     -f FILENAME     read variants from a file
     -F FORMAT       a format string for printing results [default: ks]
     -k K            value of k to use [default: 25]
@@ -219,12 +219,11 @@ def binSqrt(Xs, S):
     return r
 
 def binHist(Xs, tx, S):
-    if tx is 'none':
-        return binLin(Xs, S)
     if tx == 'log':
         return binLog(Xs, S)
     if tx == 'sqrt':
         return binSqrt(Xs, S)
+    return binLin(Xs, S)
 
 def kolmogorovSmirnov(hx, hy):
     zs = list(set(hx.keys() + hy.keys()))
@@ -719,8 +718,6 @@ def main(argv):
                             x0 = y
                             c0 = c1
                 wtXs[x] = 1 + c0
-                if c0 > 0:
-                    print >> sys.stderr, '%s\twt\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
         for x in mutXs.keys():
             if x in kx:
                 mutXs[x] = kx[x]
@@ -734,8 +731,6 @@ def main(argv):
                             x0 = y
                             c0 = c1
                 mutXs[x] = 1 + c0
-                if c0 > 0:
-                    print >> sys.stderr, '%s\tmut\t%s\t%s\t%d' % (h, render(K, x), render(K, x0), c0)
 
     if 'bias' in fmt:
         (biasMean, biasVar) = computeBias(K, kx)
@@ -831,9 +826,12 @@ def main(argv):
             wtD = cAlpha * math.sqrt((nx + nz)/(nx * nz))
             mutD = cAlpha * math.sqrt((ny + nz)/(ny * nz))
 
-            hdrs += ['wtKS', 'mutKS', 'wtD', 'mutD']
-            fmts += ['%g', '%g', '%g', '%g']
-            outs += [wtKS, mutKS, wtD, mutD]
+            rx = 1*(wtKS > wtD) + 2*(mutKS > mutD)
+            rv = ['null', 'wt', 'mut', 'wt/mut'][rx]
+
+            hdrs += ['ksRes', 'wtKS', 'mutKS', 'wtD', 'mutD']
+            fmts += ['%s', '%g', '%g', '%g', '%g']
+            outs += [rv, wtKS, mutKS, wtD, mutD]
 
         if 'hist' in fmt:
             vx = {}
