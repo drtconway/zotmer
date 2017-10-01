@@ -511,6 +511,13 @@ def context(k, v, sf):
 
     r = applyVariant(s, v)
 
+    if False:
+        print '>'+v['hgvs']
+        print s[wt[0]-100:wt[1]+100]
+    if False:
+        print '>'+v['hgvs']
+        print r[mut[0]-100:mut[1]+100]
+
     wtXs = set(kmers(k, s[wt[0]:wt[1]], False))
     mutXs = set(kmers(k, r[mut[0]:mut[1]], False))
     com = wtXs & mutXs
@@ -525,76 +532,6 @@ def context(k, v, sf):
 
     #print '%s\t%s\t%d\t%d\t%d' % (v['hgvs'], v['type'], len(wtXs), len(mutXs), len(com))
     return (wtXs, mutXs)
-
-
-def trace(K, kx, x0, r):
-    M = (1 << (2*K)) - 1
-    S = 2*(K-1)
-
-    m = 0
-    # Trace fwd
-    x = x0
-    for n in range(K):
-        x1 = None
-        c1 = 0
-        y0 = (x << 2) & M
-        for y in [y0 + i for i in range(4)]:
-            yc = kx.get(y, 0)
-            if yc > c1:
-                c1 = yc
-                x1 = y
-        if x1 is None or r.get(x1, 0) > 0:
-            break
-        r[x1] = c1
-        m += 1
-        x = x1
-
-    # Trace rev
-    x = x0
-    for n in range(K):
-        x1 = None
-        c1 = 0
-        y0 = (x >> 2)
-        for y in [y0 + (i << S) for i in range(4)]:
-            yc = kx.get(y, 0)
-            if yc > c1:
-                c1 = yc
-                x1 = y
-        if x1 is None or r.get(x1, 0) > 0:
-            break
-        r[x1] = c1
-        m += 1
-        x = x1
-    return m
-
-def untrace(K, kx):
-    M = (1 << (2*K)) - 1
-    fol = {}
-    for x in kx.keys():
-        fol[x] = [x]
-    n = len(fol)
-    while True:
-        for x in fol.keys():
-            if x not in fol:
-                continue
-            y0 = (fol[x][-1] << 2) & M
-            ys = []
-            for y in [y0 + i for i in range(4)]:
-                if y in fol:
-                    ys.append(y)
-            if len(ys) == 0:
-                continue
-            if len(ys) > 1:
-                print 'XXX', render(K, x), [render(K, y) for y in ys]
-            y = ys[0]
-            if y in fol:
-                fol[x] += fol[y]
-                del fol[y]
-        if len(fol) == n:
-            break
-        n = len(fol)
-    for (x,ys) in fol.items():
-        print render(K, x), [render(K, y) for y in ys]
 
 class SequenceFactory(object):
     def __init__(self, home):
@@ -705,7 +642,9 @@ def main(argv):
     with open(opts['<index>']) as f:
         itms = yaml.load(f)
 
+    wtProbes = []
     wtRes = []
+    mutProbes = []
     mutRes = []
     hs = []
     wtIdx = {}
@@ -714,18 +653,22 @@ def main(argv):
         n = len(hs)
         h = itm['hgvs']
         hs.append(h)
+        wtProbes.append(set([]))
         wtRes.append({})
         for x in itm['wt']:
             y = kmer(x)
             if y not in wtIdx:
                 wtIdx[y] = set([])
             wtIdx[y].add(n)
+            wtProbes[-1].add(y)
+        mutProbes.append(set([]))
         mutRes.append({})
         for x in itm['mut']:
             y = kmer(x)
             if y not in mutIdx:
                 mutIdx[y] = set([])
             mutIdx[y].add(n)
+            mutProbes[-1].add(y)
 
     if opts['-v']:
         print >> sys.stderr, "done."
@@ -740,487 +683,201 @@ def main(argv):
 
     rn = 0
     M = (1 << 12) - 1
-    if True:
-        bar = progressbar.ProgressBar(max_value=progressbar.UnknownLength)
-        bar.start()
-        for fn in opts['<input>']:
-            with openFile(fn) as f:
-                for fq in readFastq(f):
-                    rn += 1
-                    if (rn & M) == 0:
-                        bar.update(rn/1000.0)
-                    if (rn & M) == 0 and opts['-v']:
-                        print >> sys.stderr, 'read pairs processed: %d' % (rn,)
-                    xs = kmersList(K, fq[1], True)
 
-                    wtHits = None
-                    for x in xs:
-                        if x in wtIdx:
-                            if wtHits is None:
-                                wtHits = set([])
-                            wtHits |= wtIdx[x]
-                    if wtHits is not None:
-                        for n in wtHits:
-                            wtXs = wtRes[n]
-                            for x in xs:
-                                wtXs[x] = 1 + wtXs.get(x, 0)
-                    mutHits = None
-                    for x in xs:
-                        if x in mutIdx:
-                            if mutHits is None:
-                                mutHits = set([])
-                            mutHits |= mutIdx[x]
-                    if mutHits is not None:
-                        for n in mutHits:
-                            mutXs = mutRes[n]
-                            for x in xs:
-                                mutXs[x] = 1 + mutXs.get(x, 0)
-                            if pulldown is not None:
-                                if n not in pulldown:
-                                    pulldown[n] = []
-                                pulldown[n] += fq
-        bar.finish()
+    bar = progressbar.ProgressBar(max_value=progressbar.UnknownLength)
+    bar.start()
+    for fn in opts['<input>']:
+        with openFile(fn) as f:
+            for fq in readFastq(f):
+                rn += 1
+                if (rn & M) == 0:
+                    bar.update(rn/1000.0)
+                if (rn & M) == 0 and opts['-v']:
+                    print >> sys.stderr, 'read pairs processed: %d' % (rn,)
+                xs = kmersList(K, fq[1], True)
 
-    if False:
-        for (fn1, fn2) in pairs(opts['<input>']):
-            bar = progressbar.ProgressBar(max_value=progressbar.UnknownLength)
-            bar.start()
-            with openFile(fn1) as f1, openFile(fn2) as f2:
-                for fq1, fq2 in both(readFastq(f1), readFastq(f2)):
-                    rn += 1
-                    if (rn & M) == 0:
-                        bar.update(rn/1000.0)
-                    if (rn & M) == 0 and opts['-v']:
-                        print >> sys.stderr, 'read pairs processed: %d' % (rn,)
-                    if combineStrands:
-                        xs = kmersList(K, fq1[1], True) + kmersList(K, fq2[1], True)
-                    else:
-                        xs = kmersList(K, fq1[1], False) + [rc(K, x) for x in kmersList(K, fq2[1], False)]
-                    wtHits = None
-                    for x in xs:
-                        if x in wtIdx:
-                            if wtHits is None:
-                                wtHits = set([])
-                            wtHits |= wtIdx[x]
-                    if wtHits is not None:
-                        for n in wtHits:
-                            wtXs = wtRes[n]
-                            for x in xs:
-                                wtXs[x] = 1 + wtXs.get(x, 0)
-                    mutHits = None
-                    for x in xs:
-                        if x in mutIdx:
-                            if mutHits is None:
-                                mutHits = set([])
-                            mutHits |= mutIdx[x]
-                    if mutHits is not None:
-                        for n in mutHits:
-                            mutXs = mutRes[n]
-                            for x in xs:
-                                mutXs[x] = 1 + mutXs.get(x, 0)
-            bar.finish()
+                wtHits = None
+                for x in xs:
+                    if x in wtIdx:
+                        if wtHits is None:
+                            wtHits = set([])
+                        wtHits |= wtIdx[x]
+                if wtHits is not None:
+                    for n in wtHits:
+                        wtXs = wtRes[n]
+                        for x in xs:
+                            wtXs[x] = 1 + wtXs.get(x, 0)
+                mutHits = None
+                for x in xs:
+                    if x in mutIdx:
+                        if mutHits is None:
+                            mutHits = set([])
+                        mutHits |= mutIdx[x]
+                if mutHits is not None:
+                    for n in mutHits:
+                        mutXs = mutRes[n]
+                        for x in xs:
+                            mutXs[x] = 1 + mutXs.get(x, 0)
+                        if pulldown is not None:
+                            if n not in pulldown:
+                                pulldown[n] = []
+                            pulldown[n] += fq
+    bar.finish()
 
     B = opts['-B']
     S = float(opts['-S'])
 
-    if False:
-        zh0 = {}
-        for (h, kx) in hkx.iteritems():
-            for (x, c) in kx.iteritems():
-                if c not in zh0:
-                    zh0[c] = 0
-                zh0[c] += 1
-        zh = binHist(zh0, B, S)
-        nz = float(sum(zh.values()))
-
-    # Now go through the res sets and try and fill in missing k-mers
-    if False:
-        # Method 1:
-        #   For each k-mer that we pulled down assign it to an allele
-        #   if is closer to that allele than the other.
-        for h in hs:
-            wtXs = wtRes[h]
-            mutXs = mutRes[h]
-            if h in hkx:
-                kx = hkx[h]
-                wtYs = {}
-                mutYs = {}
-                for (x,c) in hkx[h].iteritems():
-                    wtD = K+1
-                    wtY = 0
-                    mutD = K+1
-                    mutY = 0
-                    for y in wtXs.keys():
-                        d = ham(x, y)
-                        if d < wtD:
-                            wtD = d
-                            wtY = y
-                    for y in mutXs.keys():
-                        d = ham(x, y)
-                        if d < mutD:
-                            mutD = d
-                            mutY = y
-                    if wtD < 3 and wtD <= mutD:
-                        if wtY not in wtYs:
-                            wtYs[wtY] = (wtD, x, c)
-                        elif wtYs[wtY][0] > wtD:
-                            wtYs[wtY] = (wtD, x, c)
-                        elif wtYs[wtY][0] == wtD and wtYs[wtY][2] < c:
-                            wtYs[wtY] = (wtD, x, c)
-                    if mutD < 3 and mutD <= wtD:
-                        if mutY not in mutYs:
-                            mutYs[mutY] = (mutD, x, c)
-                        elif mutYs[mutY][0] > mutD:
-                            mutYs[mutY] = (mutD, x, c)
-                        elif mutYs[mutY][0] == mutD and mutYs[mutY][2] < c:
-                            mutYs[mutY] = (mutD, x, c)
-                for (x,v) in wtYs.iteritems():
-                    #print >> sys.stderr, 'wt\t%s\t%s\t%d\t%d\t%s' % (render(K, x), render(K, v[1]), v[0], v[2], h)
-                    wtXs[x] = v[2]
-                for (x,v) in mutYs.iteritems():
-                    #print >> sys.stderr, 'mut\t%s\t%s\t%d\t%d\t%s' % (render(K, x), render(K, v[1]), v[0], v[2], h)
-                    mutXs[x] = v[2]
-
-    if False:
-        # Method 2:
-        #   Find exact hits, then trace de Bruijn neighbors, picking the highest coverage one
-        for h in hs:
-            wtXs = wtRes[h]
-            mutXs = mutRes[h]
-            if h not in hkx:
-                continue
-            kx = hkx[h]
-
-            misses = 0
-            for x in wtXs.keys():
-                if x in kx:
-                    wtXs[x] = kx[x]
-                else:
-                    misses += 1
-            if misses > 0:
-                fills = 0
-                for x in wtXs.keys():
-                    if wtXs[x] > 0:
-                        m = trace(K, kx, x, wtXs)
-                        fills += m
-                for x in wtXs.keys():
-                    if fills == 0:
-                        break
-                    if wtXs[x] == 0:
-                        del wtXs[x]
-                        fills -= 1
-
-
-            misses = 0
-            for x in mutXs.keys():
-                if x in kx:
-                    mutXs[x] = kx[x]
-                else:
-                    misses += 1
-            if misses > 0:
-                fills = 0
-                for x in mutXs.keys():
-                    if mutXs[x] > 0:
-                        m = trace(K, kx, x, mutXs)
-                        fills += m
-                for x in mutXs.keys():
-                    if fills == 0:
-                        break
-                    if mutXs[x] == 0:
-                        del mutXs[x]
-                        fills -= 1
-
-    if True:
-        wtMeans = []
-        wtMedians = []
-        mutMeans = []
-        mutMedians = []
-        for n in range(len(hs)):
-            xs = [x for x in wtRes[n].values()]
-            xh0 = hist(xs)
-            xh = binHist(xh0, B, S)
-            wtMeans.append((histMean(xh), n))
-            wtMedians.append((histMedian(xh), n))
-
-            ys = [y for y in mutRes[n].values()]
-            yh0 = hist(ys)
-            yh = binHist(yh0, B, S)
-            mutMeans.append((histMean(yh), n))
-            mutMedians.append((histMedian(yh), n))
-
-        wtMeans.sort()
-        wtMeanRanks = makeRanks(wtMeans)
-        wtMedians.sort()
-        wtMedianRanks = makeRanks(wtMedians)
-
-        mutMeans.sort()
-        mutMeanRanks = makeRanks(mutMeans)
-        mutMedians.sort()
-        mutMedianRanks = makeRanks(mutMedians)
-
-        Q = 10
-
-        zf = None
-        if pulldown is not None:
-            zf = zipfile.ZipFile(opts['-p'], 'w', zipfile.ZIP_DEFLATED)
-
-        hdrShown = False
-        for n in range(len(hs)):
-            h = hs[n]
-            hdrs = ['n']
-            fmts = ['%d']
-            outs = [n]
-
-            resV =  1*(wtMedianRanks[n][1] > Q) + 2*(mutMedianRanks[n][1] > Q)
-            res = ['null', 'wt', 'mut', 'wt/mut'][resV]
-
-            hdrs += ['res', 'wtMedian', 'wtMedianRank', 'mutMedian', 'mutMedianRank']
-            fmts += ['%s', '%g', '%g', '%g', '%g']
-            outs += [res, wtMedianRanks[n][1], wtMedianRanks[n][0], mutMedianRanks[n][1], mutMedianRanks[n][0]]
-
-            resV =  1*(wtMeanRanks[n][1] > Q) + 2*(mutMeanRanks[n][1] > Q)
-            res = ['null', 'wt', 'mut', 'wt/mut'][resV]
-
-            hdrs += ['resMean', 'wtMean', 'wtMeanRank', 'mutMean', 'mutMeanRank']
-            fmts += ['%s', '%g', '%g', '%g', '%g']
-            outs += [res, wtMeanRanks[n][1], wtMeanRanks[n][0], mutMeanRanks[n][1], mutMeanRanks[n][0]]
-
-            if 'hist' in fmt:
-                xs = [x for x in wtRes[n].values()]
-                xs.sort()
-                nx = float(len(xs))
-                nx = max(1.0, nx)
-                xh0 = hist(xs)
-                xh = binHist(xh0, B, S)
-
-                ys = [y for y in mutRes[n].values()]
-                ys.sort()
-                ny = float(len(ys))
-                ny = max(1.0, ny)
-                yh0 = hist(ys)
-                yh = binHist(yh0, B, S)
-
-                wtT = 0
-                wtP = 0.0
-                mutT = 0
-                mutP = 0.0
-                cs = list(set(xh.keys() + yh.keys()))
-                cs.sort()
-                for c in cs:
-                    wtC = xh.get(c, 0)
-                    wtT += wtC
-                    wtP = wtT / nx
-                    mutC = yh.get(c, 0)
-                    mutT += mutC
-                    mutP = mutT / ny
-
-                    hdrs1 = hdrs + ['coverage', 'wtCnt', 'wtCum', 'mutCnt', 'mutCum']
-                    fmts1 = fmts + ['%d', '%d', '%g', '%d', '%g']
-                    outs1 = outs + [c, wtC, wtP, mutC, mutP]
-
-                    hdrs1 += ['hgvs']
-                    fmts1 += ['%s']
-                    outs1 += [h]
-
-                    if not hdrShown:
-                        hdrShown = True
-                        print '\t'.join(hdrs1)
-                    print '\t'.join(fmts1) % tuple(outs1)
-            else:
-                hdrs += ['hgvs']
-                fmts += ['%s']
-                outs += [h]
-
-                if not hdrShown:
-                    hdrShown = True
-                    print '\t'.join(hdrs)
-                print '\t'.join(fmts) % tuple(outs)
-
-            if pulldown is not None and mutMedianRanks[n][1] > Q:
-                rds = pulldown[n]
-                zf.writestr(h, '\n'.join(rds))
-
-        if zf is not None:
-            zf.close()
-
-        return
-
-    if 'bias' in fmt:
-        (biasMean, biasVar) = computeBias(K, kx)
-        print >> sys.stderr, 'global bias: %g\t%g' % (biasMean, biasVar)
-
-    hdrShown = False
-
-    alpha = float(opts['-A'])
-    cAlpha = math.sqrt(-0.5*math.log(0.5*alpha))
-
-    if 'kl' in fmt:
-        kls = []
-        for h in hs:
-            xs = [x for x in wtRes[h].values()]
-            nx = float(len(xs))
-            xh0 = hist(xs)
-            xh = binHist(xh0, B, S)
-
-            ys = [y for y in mutRes[h].values()]
-            ny = float(len(ys))
-            yh0 = hist(ys)
-            yh = binHist(yh0, B, S)
-
-            wtKL = kullbackLeibler(xh, zh)
-            mutKL = kullbackLeibler(yh, zh)
-
-            if wtKL > 0:
-                kls.append(wtKL)
-            if mutKL > 0:
-                kls.append(mutKL)
-        kls.sort()
-        m = len(kls) // 2
-        p = 0.01
-        negModel = estimateGamma(kls[:m])
-        posModel = estimateGamma(kls[m:])
-
-    for h in hs:
-        hdrs = ['hgvs']
-        fmts = ['%s']
-        outs = [h]
-
-        xs = [x for x in wtRes[h].values()]
-        nx = float(len(xs))
+    wtMeans = []
+    wtMedians = []
+    mutMeans = []
+    mutMedians = []
+    for n in range(len(hs)):
+        xs = [x for x in wtRes[n].values()]
         xh0 = hist(xs)
         xh = binHist(xh0, B, S)
+        wtMeans.append((histMean(xh), n))
+        wtMedians.append((histMedian(xh), n))
 
-        ys = [y for y in mutRes[h].values()]
-        ny = float(len(ys))
+        ys = [y for y in mutRes[n].values()]
         yh0 = hist(ys)
         yh = binHist(yh0, B, S)
+        mutMeans.append((histMean(yh), n))
+        mutMedians.append((histMedian(yh), n))
 
-        if 'bias' in fmt:
-            (wtBm, wtBv) = computeBias(K, wtRes[h], True)
-            hdrs += ['wtBiasMean', 'wtBiasVar']
-            fmts += ['%g', '%g']
-            outs += [wtBm, wtBv]
-            (mutBm, mutBv) = computeBias(K, mutRes[h])
-            hdrs += ['mutBiasMean', 'mutBiasVar']
-            fmts += ['%g', '%g']
-            outs += [mutBm, mutBv]
+    wtMeans.sort()
+    wtMeanRanks = makeRanks(wtMeans)
+    wtMedians.sort()
+    wtMedianRanks = makeRanks(wtMedians)
 
-        if 'chi2' in fmt:
-            (wtD, wtDF) = chiSquared(xh, zh)
-            wtP = chiSquaredPval(wtD, wtDF, lowerTail=False)
-            (mutD, mutDF) = chiSquared(yh, zh)
-            mutP = chiSquaredPval(mutD, mutDF, lowerTail=False)
+    mutMeans.sort()
+    mutMeanRanks = makeRanks(mutMeans)
+    mutMedians.sort()
+    mutMedianRanks = makeRanks(mutMedians)
 
-            hdrs += ['wtChi2', 'mutChi2', 'chi2DF', 'wtPval', 'mutPval']
-            fmts += ['%g', '%g', '%d', '%g', '%g']
-            outs += [wtD, mutD, mutDF, wtP, mutP]
+    Q = 10
 
-        if 'kl' in fmt:
-            wtKL = kullbackLeibler(xh, zh)
-            wtKLa = max(0.01, wtKL)
-            wtKLPn = max(0.0, 1 - gammaCDF(negModel, wtKLa))
-            wtKLPp = gammaCDF(posModel, wtKLa)
-            mutKL = kullbackLeibler(yh, zh)
-            mutKLa = max(0.01, mutKL)
-            mutKLPn = max(0.0, 1 - gammaCDF(negModel, mutKLa))
-            mutKLPp = gammaCDF(posModel, mutKLa)
+    zf = None
+    if pulldown is not None:
+        zf = zipfile.ZipFile(opts['-p'], 'w', zipfile.ZIP_DEFLATED)
 
-            wtOR = gammaPDF(negModel, wtKLa) / gammaPDF(posModel, wtKLa)
-            mutOR = gammaPDF(negModel, mutKLa) / gammaPDF(posModel, mutKLa)
+    hdrShown = False
+    for n in range(len(hs)):
 
-            hdrs += ['wtKL', 'mutKL', 'wtKLPn', 'wtKLPp', 'mutKLPn', 'mutKLPp', 'wtOR', 'mutOR']
-            fmts += ['%g', '%g', '%g', '%g', '%g', '%g', '%g', '%g']
-            outs += [wtKL, mutKL, wtKLPn, wtKLPp, mutKLPn, mutKLPp, wtOR, mutOR]
+        wtH = [0 for k in xrange(K+1)]
+        for x in wtProbes[n]:
+            dMax = K+1
+            yMax = 0
+            for y in wtRes[n].keys():
+                d = ham(x, y)
+                if d < dMax:
+                    dMax = d
+                    yMax = y
+            if dMax <= K:
+                print '%d\twt\t%s\t%d\t%d' % (n, render(K, x), dMax, wtRes[n][yMax])
+                #wtH[dMax] += wtRes[n][yMax]
+                wtH[dMax] += 1
 
-        if 'da' in fmt:
-            wtDA = differentialArea(xh, zh)
-            mutDA = differentialArea(yh, zh)
+        mutH = [0 for k in xrange(K+1)]
+        for x in mutProbes[n]:
+            dMax = K+1
+            yMax = 0
+            for y in mutRes[n].keys():
+                d = ham(x, y)
+                if d < dMax:
+                    dMax = d
+                    yMax = y
+            if dMax <= K:
+                print '%d\tmut\t%s\t%d\t%d' % (n, render(K, x), dMax, mutRes[n][yMax])
+                #mutH[dMax] += mutRes[n][yMax]
+                mutH[dMax] += 1
 
-            rDA = 1*(wtDA < 0.05) + 2*(mutDA < 0.05)
-            vDA = ['null', 'wt', 'mut', 'wt/mut'][rDA]
+        continue
+        wtHMean = float(sum([d*wtH[d] for d in xrange(K+1)]))/float(max(1,sum(wtH)))
+        mutHMean = float(sum([d*mutH[d] for d in xrange(K+1)]))/float(max(1,sum(mutH)))
 
-            hdrs += ['daRes', 'wtDA', 'mutDA']
-            fmts += ['%s', '%g', '%g']
-            outs += [vDA, wtDA, mutDA]
+        #print '\t'.join(map(str, [n] + wtH))
+        #print '\t'.join(map(str, [n] + mutH))
 
-        if 'wm' in fmt:
-            mf = max(1, max(max(xh.keys()), max(yh.keys())))
-            wtWM = wassersteinMetric(xh, zh, mf)
-            mutWM = wassersteinMetric(yh, zh, mf)
+        h = hs[n]
+        hdrs = ['n']
+        fmts = ['%d']
+        outs = [n]
 
-            hdrs += ['wtWM', 'mutWM']
-            fmts += ['%g', '%g']
-            outs += [wtWM, mutWM]
+        resV =  1*(wtMedianRanks[n][1] > Q) + 2*(mutMedianRanks[n][1] > Q)
+        res = ['null', 'wt', 'mut', 'wt/mut'][resV]
 
-        if 'ks' in fmt:
-            wtKS = kolmogorovSmirnov(xh, zh)[1]
-            mutKS = kolmogorovSmirnov(yh, zh)[1]
+        hdrs += ['res', 'wtMedian', 'wtMedianRank', 'mutMedian', 'mutMedianRank']
+        fmts += ['%s', '%g', '%g', '%g', '%g']
+        outs += [res, wtMedianRanks[n][1], wtMedianRanks[n][0], mutMedianRanks[n][1], mutMedianRanks[n][0]]
 
-            wtD = cAlpha * math.sqrt((nx + nz)/(nx * nz))
-            mutD = cAlpha * math.sqrt((ny + nz)/(ny * nz))
+        resV =  1*(wtMeanRanks[n][1] > Q) + 2*(mutMeanRanks[n][1] > Q)
+        res = ['null', 'wt', 'mut', 'wt/mut'][resV]
 
-            rx = 1*(wtKS > wtD) + 2*(mutKS > mutD)
-            rv = ['null', 'wt', 'mut', 'wt/mut'][rx]
+        hdrs += ['resMean', 'wtMean', 'wtMeanRank', 'mutMean', 'mutMeanRank']
+        fmts += ['%s', '%g', '%g', '%g', '%g']
+        outs += [res, wtMeanRanks[n][1], wtMeanRanks[n][0], mutMeanRanks[n][1], mutMeanRanks[n][0]]
 
-            hdrs += ['ksRes', 'wtKS', 'mutKS', 'wtD', 'mutD']
-            fmts += ['%s', '%g', '%g', '%g', '%g']
-            outs += [rv, wtKS, mutKS, wtD, mutD]
+        hdrs += ['wtHMean', 'mutHMean']
+        fmts += ['%g', '%g']
+        outs += [wtHMean, mutHMean]
 
         if 'hist' in fmt:
-            vx = {}
-            if 'bin' in fmt:
-                if 'glo' in fmt:
-                    for (c,f) in zh.iteritems():
-                        if c not in vx:
-                            vx[c] = [0, 0, 0]
-                        vx[c][0] = f
-                for (c,f) in xh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][1] = f
-                for (c,f) in yh.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][2] = f
-            else:
-                if 'glo' in fmt:
-                    for (c,f) in zh0.iteritems():
-                        if c not in vx:
-                            vx[c] = [0, 0, 0]
-                        vx[c][0] = f
-                for (c,f) in xh0.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][1] = f
-                for (c,f) in yh0.iteritems():
-                    if c not in vx:
-                        vx[c] = [0, 0, 0]
-                    vx[c][2] = f
-            vx = vx.items()
-            vx.sort()
-            tx = [0, 0, 0]
-            for i in xrange(len(vx)):
-                (c, fs) = vx[i]
-                tx[0] += fs[0]
-                tx[1] += fs[1]
-                tx[2] += fs[2]
+            xs = [x for x in wtRes[n].values()]
+            xs.sort()
+            nx = float(len(xs))
+            nx = max(1.0, nx)
+            xh0 = hist(xs)
+            xh = binHist(xh0, B, S)
+
+            ys = [y for y in mutRes[n].values()]
+            ys.sort()
+            ny = float(len(ys))
+            ny = max(1.0, ny)
+            yh0 = hist(ys)
+            yh = binHist(yh0, B, S)
+
+            wtT = 0
+            wtP = 0.0
+            mutT = 0
+            mutP = 0.0
+            cs = list(set(xh.keys() + yh.keys()))
+            cs.sort()
+            for c in cs:
+                wtC = xh.get(c, 0)
+                wtT += wtC
+                wtP = wtT / nx
+                mutC = yh.get(c, 0)
+                mutT += mutC
+                mutP = mutT / ny
+
                 hdrs1 = hdrs + ['coverage', 'wtCnt', 'wtCum', 'mutCnt', 'mutCum']
                 fmts1 = fmts + ['%d', '%d', '%g', '%d', '%g']
-                outs1 = outs + [c, fs[1], tx[1]/nx, fs[2], tx[2]/ny]
-                if 'glo' in fmt:
-                    hdrs1 += ['gloCnt', 'gloCum']
-                    fmts1 += ['%d', '%g']
-                    outs1 += [fs[0], tx[0]/nz]
+                outs1 = outs + [c, wtC, wtP, mutC, mutP]
+
+                hdrs1 += ['hgvs']
+                fmts1 += ['%s']
+                outs1 += [h]
+
                 if not hdrShown:
                     hdrShown = True
                     print '\t'.join(hdrs1)
                 print '\t'.join(fmts1) % tuple(outs1)
         else:
+            hdrs += ['hgvs']
+            fmts += ['%s']
+            outs += [h]
+
             if not hdrShown:
                 hdrShown = True
                 print '\t'.join(hdrs)
             print '\t'.join(fmts) % tuple(outs)
-        sys.stdout.flush()
+
+        if pulldown is not None and mutMedianRanks[n][1] > Q:
+            rds = pulldown[n]
+            zf.writestr(h + '.fastq', '\n'.join(rds))
+
+    if zf is not None:
+        zf.close()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
