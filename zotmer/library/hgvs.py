@@ -30,14 +30,141 @@ hg19Data = [("chr1",   "CM000663.1",  "NC_000001.10"),
 refSeq2Hg19 = dict([(r, h) for (h, g, r) in hg19Data])
 hg19ToRefSeq= dict([(h, r) for (h, g, r) in hg19Data])
 
+class HGVS(object):
+    def __init__(self, acc):
+        self.acc = acc
+        self.seqFac = None
+
+    def accession(self):
+        return self.acc
+
+    def setSequenceFactory(self, seqFac):
+        self.seqFac = seqFac
+
+    def loadAccession(self):
+        assert self.seqFac is not None
+        return self.seqFac[self.accession()]
+
+    def apply(self, s):
+        (p,q) = self.range()
+        v = self.sequence()
+        a = rope.substr(s, 0, p)
+        b = rope.substr(s, q, len(s))
+        if len(v) > 0:
+            c = rope.atom(v)
+            return rope.join([a, c, b])
+        else:
+            return rope.concat(a, b)
+
+class Substitution(HGVS):
+    def __init__(self, acc, pos, ref, var):
+        super(Substitution, self).__init__(acc)
+        self.pos = pos
+        self.ref = ref
+        self.var = var
+
+    def range(self):
+        return (self.pos, self.pos+1)
+
+    def sequence(self):
+        return self.var
+
+    def __str__(self):
+        return '%s:g.%d%s>%s' % (self.acc, self.pos, self.ref, self.var)
+
+class Deletion(HGVS):
+    def __init__(self, acc, fst, lst):
+        super(Deletion, self).__init__(acc)
+        self.fst = fst
+        self.lst = lst
+
+    def range(self):
+        return (self.fst, self.lst+1)
+
+    def sequence(self):
+        return ''
+
+    def __str__(self):
+        return '%s:g.%d_%ddel' % (self.acc, self.fst, self.lst)
+
+class Insertion(HGVS):
+    def __init__(self, acc, aft, bef, seq):
+        super(Insertion, self).__init__(acc)
+        self.aft = aft
+        assert self.aft + 1 == self.bef
+        self.seq = seq
+
+    def range(self):
+        return (self.aft, self.aft)
+
+    def sequence(self):
+        return self.seq
+
+    def __str__(self):
+        return '%s:g.%d_%dins%s' % (self.acc, self.aft, self.aft+1, self.seq)
+
+class DeletionInsertion(HGVS):
+    def __init__(self, acc, fst, lst, seq):
+        super(DeletionInsertion, self).__init__(acc)
+        self.fst = fst
+        self.lst = lst
+        self.seq = seq
+
+    def range(self):
+        return (self.fst, self.lst+1)
+
+    def sequence(self):
+        return self.seq
+
+    def __str__(self):
+        return '%s:g.%d_%ddelins%s' % (self.acc, self.fst, self.lst, self.seq)
+
+class Repeat(HGVS):
+    def __init__(self, acc, fst, lst, cnt):
+        super(Repeat, self).__init__(acc)
+        self.fst = fst
+        self.lst = lst
+        self.cnt = cnt
+        self.seq = None
+
+    def range(self):
+        return (self.fst, self.lst+1)
+
+    def sequence(self):
+        if not self.seq:
+            big = self.loadAccession()
+            self.seq = big[self.fst-1:self.lst]
+        return self.cnt * self.seq
+
+    def __str__(self):
+        return '%s:g.%d_%d[%d]' % (self.acc, self.fst, self.lst, self.cnt)
+
+class Duplication(HGVS):
+    def __init__(self, acc, fst, lst):
+        super(Duplication, self).__init__(acc)
+        self.fst = fst
+        self.lst = lst
+        self.seq = None
+
+    def range(self):
+        return (self.fst, self.lst+1)
+
+    def sequence(self):
+        if not self.seq:
+            big = self.loadAccession()
+            self.seq = big[self.fst-1:self.lst]
+        return 2*self.seq
+
+    def __str__(self):
+        return '%s:g.%d_%ddup' % (self.acc, self.fst, self.lst)
+
 gvarSub = re.compile("(\w+\.\d+):g\.(\d+)([ACGT])>([ACGT])$")
 gvarRpt = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)([ACGT]*)\[(\d+)\]$")
 gvarIns = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)ins([ACGT]+)$")
 gvarDel0 = re.compile("(\w+\.\d+):g\.(\d+)del([ACGT])?$")
 gvarDel1 = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)del([ACGT]+)?$")
 gvarDel2 = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)del(\d+)?$")
-gvarDup1 = re.compile("(\w+\.\d+):g\.(\d+)dup([ACGT])?$")
-gvarDup2 = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)dup([ACGT]+)?$")
+gvarDup = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)dup$")
 gvarDin = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)delins([ACGT]+)$")
 
 def parseHGVS(s):
@@ -99,23 +226,13 @@ def parseHGVS(s):
         r['last-position'] = int(m.group(3))
         return r
 
-    m = gvarDup1.match(s)
+    m = gvarDup.match(s)
     if m:
         r = {}
         r['type'] = 'duplication'
         r['accession'] = m.group(1)
-        r['position'] = int(m.group(2))
-        r['reference'] = m.group(3)
-        return r
-
-    m = gvarDup2.match(s)
-    if m:
-        r = {}
-        r['type'] = 'tandem-duplication'
-        r['accession'] = m.group(1)
         r['first-position'] = int(m.group(2))
         r['last-position'] = int(m.group(3))
-        r['reference'] = m.group(4)
         return r
 
     m = gvarDin.match(s)
@@ -129,6 +246,21 @@ def parseHGVS(s):
         return r
 
     return None
+
+def makeHGVS(s):
+    v = parseHGVS(s)
+    if v['type'] == 'substitution':
+        return Substitution(v['accession'], v['position'], v['reference'], v['variant'])
+    if v['type'] == 'repeat':
+        return Repeat(v['accession'], v['start-position'], v['stop-position'], v['count'])
+    if v['type'] == 'insertion':
+        return Insertion(v['accession'], v['after-position'], v['before-position'], v['sequence'])
+    if v['type'] == 'deletion':
+        return Deletion(v['accession'], v['first-position'], v['last-position'])
+    if v['type'] == 'duplication':
+        return Duplication(v['accession'], v['first-position'], v['last-position'])
+    if v['type'] == 'deletion-insertion':
+        return DeletionInsertion(v['accession'], v['first-position'], v['last-position'], v['sequence'])
 
 def applyVariant(s, v):
     if v['type'] == 'substitution':
