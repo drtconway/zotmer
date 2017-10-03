@@ -2,12 +2,10 @@
 zot hgvs-find - search for known variants in read data.
 
 Usage:
-    zot hgvs-find -R [options] <variant>
     zot hgvs-find -X [options] <index> [<variant>...]
     zot hgvs-find [options] <index> <input>...
 
 Options:
-    -R              report the ambiguity associated with a variant
     -X              index HGVS variants
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.001]
     -B BINFUNC      binning function to use [default: none]
@@ -16,6 +14,7 @@ Options:
     -F FORMAT       a format string for printing results [default: ks]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
+    -L LENGTH       nominal read length (for indexing) [default: 100]
     -p FILE         pulldown reads for variant hits into the named zip-file.
     -s              single stranded k-mer extraction
     -v              produce verbose output
@@ -48,8 +47,9 @@ from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, kmersWithPo
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
-from pykmer.stats import logGammaP, logGammaQ, logLowerGamma
-from zotmer.library.hgvs import applyVariant, parseHGVS, refSeq2Hg19
+from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, ksDistance2, logGammaP, logGammaQ, logLowerGamma
+from zotmer.library.align import glocalAlignment, revComp
+from zotmer.library.hgvs import makeHGVS, refSeq2Hg19
 from zotmer.library.files import readKmersAndCounts
 from zotmer.library.rope import rope
 from zotmer.library.trim import trim
@@ -126,6 +126,31 @@ def computeBias(K, zs, verbose = False):
             print '%s\t%s\t%d\t%d\t%g' % (render(K, x), render(K, y), xc, yc, v)
         S.add(v)
     return (S.mean(), S.var())
+
+def hamming(K, xs, s):
+    cs = [0 for j in range(K+1)]
+    ws = [0 for j in range(K+1)]
+    itms = xs.items()
+    zs = []
+    for y in kmers(K, s, False):
+        dMin = K+1
+        xMin = None
+        cMin = None
+        for (x,c) in itms:
+            d = ham(y, x)
+            if d < dMin:
+                dMin = d
+                xMin = x
+                cMin = c
+        if cMin is None:
+            continue
+        cs[dMin] += 1
+        ws[dMin] += cMin
+        zs.append((y, xMin, dMin, cMin))
+    return (cs, ws, zs)
+
+def nullModelPdf(K):
+    return [math.exp(logBinEq(0.25, K, j)) for j in range(K+1)]
 
 def mkRnks(xs):
     zs = {}
@@ -457,69 +482,14 @@ def ball(K, xs, d):
             ys |= set(neigh(K, x, i))
     return ys
 
-def context0(k, v, L, sf):
-    if v['type'] == 'substitution':
-        p = v['position'] - 1
-        wt = (p - L + 1, p + L)
-        mut = wt
-    elif v['type'] == 'insertion':
-        p = v['after-position'] + 1
-        q = v['before-position']
-        wt = (p - L + 1, q + L - 1)
-        mut = (p - L + 1, q + L - 1 + len(v['sequence']))
-    elif v['type'] == 'deletion':
-        p = v['first-position']
-        q = v['last-position'] + 1
-        wt = (p - L + 1, q + L)
-        mut = (p - L + 1, p + L)
-    else:
-        return None
+def context(k, v, sf, l):
+    (wtSeq, mutSeq) = v.context(l)
 
-    acc = v['accession']
-    seq = sf[acc]
-    s = rope.atom(seq)
+    (wtKSeq, mutKSeq) = v.context(k)
 
-    r = applyVariant(s, v)
+    wtXs = set(kmers(k, wtKSeq, False))
+    mutXs = set(kmers(k, mutKSeq, False))
 
-    wtXs = kmersWithPosList(k, r[wt[0]:wt[1]], False)
-    mutXs = kmersWithPosList(k, s[mut[0]:mut[1]], False)
-
-    return (wtXs, mutXs)
-
-def context(k, v, sf):
-    if v['type'] == 'substitution':
-        p = v['position'] - 1
-        wt = (p - k + 1, p + k)
-        mut = wt
-    elif v['type'] == 'insertion':
-        p = v['after-position']
-        q = v['before-position'] - 1
-        assert p == q
-        wt = (p - k + 1, q + k - 1)
-        mut = (p - k + 1, q + k - 1 + len(v['sequence']))
-    elif v['type'] == 'deletion':
-        p = v['first-position'] - 1
-        q = v['last-position']
-        wt = (p - k + 1, q + k)
-        mut = (p - k + 1, p + k)
-    else:
-        return None
-
-    acc = v['accession']
-    seq = sf[acc]
-    s = rope.atom(seq)
-
-    r = applyVariant(s, v)
-
-    if False:
-        print '>'+v['hgvs']
-        print s[wt[0]-100:wt[1]+100]
-    if False:
-        print '>'+v['hgvs']
-        print r[mut[0]-100:mut[1]+100]
-
-    wtXs = set(kmers(k, s[wt[0]:wt[1]], False))
-    mutXs = set(kmers(k, r[mut[0]:mut[1]], False))
     com = wtXs & mutXs
     wtXs -= com
     mutXs -= com
@@ -530,8 +500,7 @@ def context(k, v, sf):
     mutXs = list(mutXs)
     mutXs.sort()
 
-    #print '%s\t%s\t%d\t%d\t%d' % (v['hgvs'], v['type'], len(wtXs), len(mutXs), len(com))
-    return (wtXs, mutXs)
+    return (wtXs, wtSeq, mutXs, mutSeq)
 
 class SequenceFactory(object):
     def __init__(self, home):
@@ -558,37 +527,12 @@ def main(argv):
 
     K = int(opts['-k'])
 
+    L = int(opts['-L'])
+
     d = "."
     if opts['-g']:
         d = opts['-g']
     sf = SequenceFactory(d)
-
-    if opts['-R']:
-        v = parseHGVS(opts['<variant>'][0])
-        (wt, mut) = context0(K, v, 100, sf)
-        idx = {}
-        for (x, p) in wt:
-            idx[x] = []
-        for (x, p) in mut:
-            idx[x] = []
-
-        for c in refSeq2Hg19.values():
-            print >> sys.stderr, 'scanning %s' % (c,)
-            with openFile(d + "/" + c + ".fa.gz") as f:
-                for (nm,seq) in readFasta(f):
-                    for (y,p) in kmersWithPos(K, seq, True):
-                        if y in idx:
-                            idx[y].append((c,p))
-
-        for (x,p) in wt:
-            for (c,p0) in idx[x]:
-                print 'wt\t%s\t%d\t%s\t%d' % (render(K, x), p, c, p0)
-
-        for (x,p) in mut:
-            for (c,p0) in idx[x]:
-                print 'mut\t%s\t%d\t%s\t%d' % (render(K, x), p, c, p0)
-
-        return
 
     if opts['-X']:
         variants = opts['<variant>']
@@ -596,37 +540,36 @@ def main(argv):
             with openFile(opts['-f']) as f:
                 variants += f.read().split()
 
-        wanted = set(['substitution', 'insertion', 'deletion'])
         vx = {}
         for v in variants:
-            x = parseHGVS(v)
+            x = makeHGVS(v)
             if x is None:
                 print >> sys.stderr, "unable to parse %s" % (v,)
                 continue
-            if x['type'] not in wanted:
-                print >> sys.stderr, "variant type not supported: %s" % (v,)
-                continue
-            x['hgvs'] = v
-            acc = x['accession']
+            x.setSequenceFactory(sf)
+            acc = x.accession()
             if acc not in vx:
                 vx[acc] = []
             vx[acc].append(x)
 
-        d = "."
-        if opts['-g']:
-            d = opts['-g']
-
         rs = []
         for (acc, vs) in vx.iteritems():
             for v in vs:
-                (wtYs, mutYs) = context(K, v, sf)
+                (wtYs, wtSeq, mutYs, mutSeq) = context(K, v, sf, L)
                 if len(wtYs) == 0 or len(mutYs) == 0:
-                    print >> sys.stderr, "variant has no distinguishing k-mers: %s" % (v['hgvs'],)
+                    print >> sys.stderr, "variant has no distinguishing k-mers: %s" % (str(v),)
+                    print >> sys.stderr, wtSeq
+                    print >> sys.stderr, mutSeq
                     continue
+                (wtKSeq, mutKSeq) = v.context(K)
                 r = {}
-                r['hgvs'] = v['hgvs']
+                r['hgvs'] = str(v)
                 r['wt'] = [render(K, y) for y in wtYs]
+                r['wtSeq'] = wtSeq
+                r['wtKSeq'] = wtKSeq
                 r['mut'] = [render(K, y) for y in mutYs]
+                r['mutSeq'] = mutSeq
+                r['mutKSeq'] = mutKSeq
                 rs.append(r)
 
         with open(opts['<index>'], 'w') as f:
@@ -642,10 +585,15 @@ def main(argv):
     with open(opts['<index>']) as f:
         itms = yaml.load(f)
 
+    hgvsVars = []
     wtProbes = []
     wtRes = []
+    wtSeq = []
+    wtKSeq = []
     mutProbes = []
     mutRes = []
+    mutSeq = []
+    mutKSeq = []
     hs = []
     wtIdx = {}
     mutIdx = {}
@@ -653,22 +601,27 @@ def main(argv):
         n = len(hs)
         h = itm['hgvs']
         hs.append(h)
+        hgvsVars.append(makeHGVS(h))
         wtProbes.append(set([]))
         wtRes.append({})
+        wtSeq.append(itm['wtSeq'])
+        wtKSeq.append(itm['wtKSeq'])
         for x in itm['wt']:
             y = kmer(x)
             if y not in wtIdx:
                 wtIdx[y] = set([])
             wtIdx[y].add(n)
-            wtProbes[-1].add(y)
+            wtProbes[n].add(y)
         mutProbes.append(set([]))
         mutRes.append({})
+        mutSeq.append(itm['mutSeq'])
+        mutKSeq.append(itm['mutKSeq'])
         for x in itm['mut']:
             y = kmer(x)
             if y not in mutIdx:
                 mutIdx[y] = set([])
             mutIdx[y].add(n)
-            mutProbes[-1].add(y)
+            mutProbes[n].add(y)
 
     if opts['-v']:
         print >> sys.stderr, "done."
@@ -682,7 +635,7 @@ def main(argv):
         pulldown = {}
 
     rn = 0
-    M = (1 << 12) - 1
+    M = (1 << 13) - 1
 
     bar = progressbar.ProgressBar(max_value=progressbar.UnknownLength)
     bar.start()
@@ -696,24 +649,20 @@ def main(argv):
                     print >> sys.stderr, 'read pairs processed: %d' % (rn,)
                 xs = kmersList(K, fq[1], True)
 
-                wtHits = None
+                wtHits = set([])
                 for x in xs:
                     if x in wtIdx:
-                        if wtHits is None:
-                            wtHits = set([])
                         wtHits |= wtIdx[x]
-                if wtHits is not None:
+                if len(wtHits) > 0:
                     for n in wtHits:
                         wtXs = wtRes[n]
                         for x in xs:
                             wtXs[x] = 1 + wtXs.get(x, 0)
-                mutHits = None
+                mutHits = set([])
                 for x in xs:
                     if x in mutIdx:
-                        if mutHits is None:
-                            mutHits = set([])
                         mutHits |= mutIdx[x]
-                if mutHits is not None:
+                if len(mutHits) > 0:
                     for n in mutHits:
                         mutXs = mutRes[n]
                         for x in xs:
@@ -727,34 +676,9 @@ def main(argv):
     B = opts['-B']
     S = float(opts['-S'])
 
-    wtMeans = []
-    wtMedians = []
-    mutMeans = []
-    mutMedians = []
-    for n in range(len(hs)):
-        xs = [x for x in wtRes[n].values()]
-        xh0 = hist(xs)
-        xh = binHist(xh0, B, S)
-        wtMeans.append((histMean(xh), n))
-        wtMedians.append((histMedian(xh), n))
-
-        ys = [y for y in mutRes[n].values()]
-        yh0 = hist(ys)
-        yh = binHist(yh0, B, S)
-        mutMeans.append((histMean(yh), n))
-        mutMedians.append((histMedian(yh), n))
-
-    wtMeans.sort()
-    wtMeanRanks = makeRanks(wtMeans)
-    wtMedians.sort()
-    wtMedianRanks = makeRanks(wtMedians)
-
-    mutMeans.sort()
-    mutMeanRanks = makeRanks(mutMeans)
-    mutMedians.sort()
-    mutMedianRanks = makeRanks(mutMedians)
-
     Q = 10
+
+    nullCdf = pdf2cdf(nullModelPdf(K))
 
     zf = None
     if pulldown is not None:
@@ -763,65 +687,99 @@ def main(argv):
     hdrShown = False
     for n in range(len(hs)):
 
-        wtH = [0 for k in xrange(K+1)]
-        for x in wtProbes[n]:
-            dMax = K+1
-            yMax = 0
-            for y in wtRes[n].keys():
-                d = ham(x, y)
-                if d < dMax:
-                    dMax = d
-                    yMax = y
-            if dMax <= K:
-                print '%d\twt\t%s\t%d\t%d' % (n, render(K, x), dMax, wtRes[n][yMax])
-                #wtH[dMax] += wtRes[n][yMax]
-                wtH[dMax] += 1
+        xs = [x for x in wtRes[n].values()]
+        xh0 = hist(xs)
+        xh = binHist(xh0, B, S)
+        wtMedian = histMedian(xh)
 
-        mutH = [0 for k in xrange(K+1)]
-        for x in mutProbes[n]:
-            dMax = K+1
-            yMax = 0
-            for y in mutRes[n].keys():
-                d = ham(x, y)
-                if d < dMax:
-                    dMax = d
-                    yMax = y
-            if dMax <= K:
-                print '%d\tmut\t%s\t%d\t%d' % (n, render(K, x), dMax, mutRes[n][yMax])
-                #mutH[dMax] += mutRes[n][yMax]
-                mutH[dMax] += 1
+        ys = [y for y in mutRes[n].values()]
+        yh0 = hist(ys)
+        yh = binHist(yh0, B, S)
+        mutMedian = histMedian(yh)
 
-        continue
-        wtHMean = float(sum([d*wtH[d] for d in xrange(K+1)]))/float(max(1,sum(wtH)))
-        mutHMean = float(sum([d*mutH[d] for d in xrange(K+1)]))/float(max(1,sum(mutH)))
+        (wtHamC, wtHamW, wtHits) = hamming(K, wtRes[n], wtKSeq[n])
+        (mutHamC, mutHamW, mutHits) = hamming(K, mutRes[n], mutKSeq[n])
 
-        #print '\t'.join(map(str, [n] + wtH))
-        #print '\t'.join(map(str, [n] + mutH))
+        wtHits.sort(key=lambda itm: itm[3])
+        wtMin = 0
+        if len(wtHits):
+            wtMin = wtHits[0][3]
+
+        mutHits.sort(key=lambda itm: itm[3])
+        mutMin = 0
+        if len(mutHits):
+            mutMin = mutHits[0][3]
+
+        wtCdf = counts2cdf(wtHamC)
+        wtCdfW = counts2cdf(wtHamW)
+        mutCdf = counts2cdf(mutHamC)
+        mutCdfW = counts2cdf(mutHamW)
+
+        wtD = ksDistance2(wtCdf, nullCdf)[0]
+        mutD = ksDistance2(mutCdf, nullCdf)[0]
 
         h = hs[n]
         hdrs = ['n']
         fmts = ['%d']
         outs = [n]
 
-        resV =  1*(wtMedianRanks[n][1] > Q) + 2*(mutMedianRanks[n][1] > Q)
+        wtAllele = ((wtMin > Q) and (wtD > 0.75))
+        mutAllele = ((mutMin > Q) and (mutD > 0.75))
+        resV =  1*wtAllele + 2*mutAllele
         res = ['null', 'wt', 'mut', 'wt/mut'][resV]
 
-        hdrs += ['res', 'wtMedian', 'wtMedianRank', 'mutMedian', 'mutMedianRank']
-        fmts += ['%s', '%g', '%g', '%g', '%g']
-        outs += [res, wtMedianRanks[n][1], wtMedianRanks[n][0], mutMedianRanks[n][1], mutMedianRanks[n][0]]
+        hdrs += ['res']
+        fmts += ['%s']
+        outs += [res]
 
-        resV =  1*(wtMeanRanks[n][1] > Q) + 2*(mutMeanRanks[n][1] > Q)
-        res = ['null', 'wt', 'mut', 'wt/mut'][resV]
+        if 'median' in fmt:
+            hdrs += ['wtMedian', 'mutMedian']
+            fmts += ['%g', '%g']
+            outs += [wtMedian, mutMedian]
 
-        hdrs += ['resMean', 'wtMean', 'wtMeanRank', 'mutMean', 'mutMeanRank']
-        fmts += ['%s', '%g', '%g', '%g', '%g']
-        outs += [res, wtMeanRanks[n][1], wtMeanRanks[n][0], mutMeanRanks[n][1], mutMeanRanks[n][0]]
+        hdrs += ['wtMin', 'mutMin']
+        fmts += ['%d', '%d']
+        outs += [wtMin, mutMin]
 
-        hdrs += ['wtHMean', 'mutHMean']
+        hdrs += ['wtD', 'mutD']
         fmts += ['%g', '%g']
-        outs += [wtHMean, mutHMean]
+        outs += [wtD, mutD]
 
-        if 'hist' in fmt:
+        if mutAllele and pulldown is not None and n in pulldown:
+            rds = pulldown[n]
+            zf.writestr(h + '.fastq', '\n'.join(rds))
+            if 'aln' in fmt:
+                aln = []
+                for i in range(1, len(rds), 4):
+                    q = rds[i]
+                    qrc = revComp(q)
+                    r0 = glocalAlignment(mutSeq[n], q)
+                    r1 = glocalAlignment(mutSeq[n], qrc)
+                    r = r0
+                    if r1[0] > r0[0]:
+                        r = r1
+                    aln.append(r)
+                stuff = {}
+                stuff['reference'] = wtSeq[n]
+                stuff['variant'] = mutSeq[n]
+                stuff['alignments'] = aln
+                zf.writestr(h + '.aln', yaml.safe_dump(stuff))
+
+        if 'ham' in fmt:
+            for j in range(K+1):
+                hdrs1 = hdrs + ['ham', 'wtCnt', 'wtCum', 'wtWgtCnt', 'wtWgtCum', 'mutCnt', 'mutCum', 'mutWgtCnt', 'mutWgtCum', 'nullCum']
+                fmts1 = fmts + ['%d', '%d', '%g', '%d', '%g', '%d', '%g', '%d', '%g', '%g']
+                outs1 = outs + [j, wtHamC[j], wtCdf[j], wtHamW[j], wtCdfW[j], mutHamC[j], mutCdf[j], mutHamW[j], mutCdfW[j], nullCdf[j]]
+
+                hdrs1 += ['hgvs']
+                fmts1 += ['%s']
+                outs1 += [h]
+
+                if not hdrShown:
+                    hdrShown = True
+                    print '\t'.join(hdrs1)
+                print '\t'.join(fmts1) % tuple(outs1)
+        elif 'hist' in fmt:
             xs = [x for x in wtRes[n].values()]
             xs.sort()
             nx = float(len(xs))
@@ -871,10 +829,6 @@ def main(argv):
                 hdrShown = True
                 print '\t'.join(hdrs)
             print '\t'.join(fmts) % tuple(outs)
-
-        if pulldown is not None and mutMedianRanks[n][1] > Q:
-            rds = pulldown[n]
-            zf.writestr(h + '.fastq', '\n'.join(rds))
 
     if zf is not None:
         zf.close()

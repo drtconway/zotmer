@@ -1,6 +1,7 @@
 import re
 
 from zotmer.library.rope import rope
+from zotmer.library.align import revComp
 
 hg19Data = [("chr1",   "CM000663.1",  "NC_000001.10"),
             ("chr2",   "CM000664.1",  "NC_000002.11"),
@@ -47,6 +48,8 @@ class HGVS(object):
 
     def apply(self, s):
         (p,q) = self.range()
+        p -= 1
+        q -= 1
         v = self.sequence()
         a = rope.substr(s, 0, p)
         b = rope.substr(s, q, len(s))
@@ -55,6 +58,28 @@ class HGVS(object):
             return rope.join([a, c, b])
         else:
             return rope.concat(a, b)
+
+    def context(self, w):
+        wt = self.range()
+        vSeq = self.sequence()
+        d = wt[0] - wt[1] + len(vSeq)
+        mut = (wt[0], wt[1] + d)
+
+        seq = self.loadAccession()
+        s = rope.atom(seq)
+
+        r = self.apply(s)
+
+        wt = (wt[0]-w, wt[1]+w)
+        wt = (max(0, wt[0]), min(wt[1], len(s)))
+
+        mut = (mut[0]-w, mut[1]+w)
+        mut = (max(0, mut[0]), min(mut[1], len(r)))
+
+        wtSeq = s[wt[0]:wt[1]]
+        mutSeq = r[mut[0]:mut[1]]
+
+        return (wtSeq, mutSeq)
 
 class Substitution(HGVS):
     def __init__(self, acc, pos, ref, var):
@@ -85,13 +110,15 @@ class Deletion(HGVS):
         return ''
 
     def __str__(self):
+        if self.fst == self.lst:
+            return '%s:g.%ddel' % (self.acc, self.fst)
         return '%s:g.%d_%ddel' % (self.acc, self.fst, self.lst)
 
 class Insertion(HGVS):
     def __init__(self, acc, aft, bef, seq):
         super(Insertion, self).__init__(acc)
         self.aft = aft
-        assert self.aft + 1 == self.bef
+        assert self.aft + 1 == bef
         self.seq = seq
 
     def range(self):
@@ -117,6 +144,8 @@ class DeletionInsertion(HGVS):
         return self.seq
 
     def __str__(self):
+        if self.fst == self.lst:
+            return '%s:g.%ddelins%s' % (self.acc, self.fst, self.seq)
         return '%s:g.%d_%ddelins%s' % (self.acc, self.fst, self.lst, self.seq)
 
 class Repeat(HGVS):
@@ -137,6 +166,8 @@ class Repeat(HGVS):
         return self.cnt * self.seq
 
     def __str__(self):
+        if self.fst == self.lst:
+            return '%s:g.%d[%d]' % (self.acc, self.fst, self.cnt)
         return '%s:g.%d_%d[%d]' % (self.acc, self.fst, self.lst, self.cnt)
 
 class Duplication(HGVS):
@@ -156,132 +187,115 @@ class Duplication(HGVS):
         return 2*self.seq
 
     def __str__(self):
+        if self.fst == self.lst:
+            return '%s:g.%ddup' % (self.acc, self.fst)
         return '%s:g.%d_%ddup' % (self.acc, self.fst, self.lst)
 
-gvarSub = re.compile("(\w+\.\d+):g\.(\d+)([ACGT])>([ACGT])$")
-gvarRpt = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)([ACGT]*)\[(\d+)\]$")
-gvarIns = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)ins([ACGT]+)$")
-gvarDel0 = re.compile("(\w+\.\d+):g\.(\d+)del([ACGT])?$")
-gvarDel1 = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)del([ACGT]+)?$")
-gvarDel2 = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)del(\d+)?$")
-gvarDup = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)dup$")
-gvarDin = re.compile("(\w+\.\d+):g\.(\d+)_(\d+)delins([ACGT]+)$")
+class Inversion(HGVS):
+    def __init__(self, acc, fst, lst):
+        super(Inversion, self).__init__(acc)
+        self.fst = fst
+        self.lst = lst
+        self.seq = None
 
-def parseHGVS(s):
+    def range(self):
+        return (self.fst, self.lst+1)
+
+    def sequence(self):
+        if not self.seq:
+            big = self.loadAccession()
+            self.seq = revComp(big[self.fst-1:self.lst].upper())
+        return self.seq
+
+    def __str__(self):
+        return '%s:g.%d_%dinv' % (self.acc, self.fst, self.lst)
+
+gvarPfx = re.compile('([^:]+):g\.(.*)$')
+gvarPos = re.compile('([0-9]+)(_([0-9]+))?(.*)$')
+gvarSub = re.compile('([ACGT])>([ACGT])$')
+gvarDel = re.compile('del([ACGT]+)?$')
+gvarDup = re.compile('dup([ACGT]+)$')
+gvarIns = re.compile('ins([ACGT]+)$')
+gvarInv = re.compile('inv$')
+gvarDIn = re.compile('delins([ACGT]+)$')
+gvarRpt = re.compile('([ACGT]+)?\[([0-9]+)\]$')
+
+def makeHGVS(txt):
+    s = txt
+    mpfx = gvarPfx.match(s)
+    if mpfx is None:
+        return None
+    ss = mpfx.groups()
+    acc = ss[0]
+    s = ss[1]
+    mpos = gvarPos.match(s)
+    if mpos is None:
+        return None
+    ss = mpos.groups()
+    pos0 = int(ss[0])
+    pos1 = ss[2]
+    s = ss[3]
+
     m = gvarSub.match(s)
     if m:
-        r = {}
-        r['type'] = 'substitution'
-        r['accession'] = m.group(1)
-        r['position'] = int(m.group(2))
-        r['reference'] = m.group(3)
-        r['variant'] = m.group(4)
-        return r
+        if pos1 is not None:
+            return None
+        ss = m.groups()
+        ref = ss[0]
+        alt = ss[1]
+        return Substitution(acc, pos0, ref, alt)
 
-    m = gvarRpt.match(s)
+    m = gvarDel.match(s)
     if m:
-        r = {}
-        r['type'] = 'repeat'
-        r['accession'] = m.group(1)
-        r['start-position'] = int(m.group(2))
-        r['stop-position'] = int(m.group(3))
-        r['sequence'] = m.group(4)
-        r['count'] = int(m.group(5))
-        return r
-
-    m = gvarIns.match(s)
-    if m:
-        r = {}
-        r['type'] = 'insertion'
-        r['accession'] = m.group(1)
-        r['after-position'] = int(m.group(2))
-        r['before-position'] = int(m.group(3))
-        r['sequence'] = m.group(4)
-        return r
-
-    m = gvarDel0.match(s)
-    if m:
-        r = {}
-        r['type'] = 'deletion'
-        r['accession'] = m.group(1)
-        r['first-position'] = int(m.group(2))
-        r['last-position'] = int(m.group(2))
-        return r
-
-    m = gvarDel1.match(s)
-    if m:
-        r = {}
-        r['type'] = 'deletion'
-        r['accession'] = m.group(1)
-        r['first-position'] = int(m.group(2))
-        r['last-position'] = int(m.group(3))
-        return r
-
-    m = gvarDel2.match(s)
-    if m:
-        r = {}
-        r['type'] = 'deletion'
-        r['accession'] = m.group(1)
-        r['first-position'] = int(m.group(2))
-        r['last-position'] = int(m.group(3))
-        return r
+        if pos1 is None:
+            pos1 = pos0
+        else:
+            pos1 = int(pos1)
+        return Deletion(acc, pos0, pos1)
 
     m = gvarDup.match(s)
     if m:
-        r = {}
-        r['type'] = 'duplication'
-        r['accession'] = m.group(1)
-        r['first-position'] = int(m.group(2))
-        r['last-position'] = int(m.group(3))
-        return r
+        if pos1 is None:
+            pos1 = pos0
+        else:
+            pos1 = int(pos1)
+        return Deletion(acc, pos0, pos1)
 
-    m = gvarDin.match(s)
+    m = gvarIns.match(s)
     if m:
-        r = {}
-        r['type'] = 'deletion-insertion'
-        r['accession'] = m.group(1)
-        r['first-position'] = int(m.group(2))
-        r['last-position'] = int(m.group(3))
-        r['insertion'] = m.group(4)
-        return r
+        if pos1 is None:
+            return None
+        pos1 = int(pos1)
+        ss = m.groups()
+        return Insertion(acc, pos0, pos1, ss[0])
 
-    return None
+    m = gvarInv.match(s)
+    if m:
+        if pos1 is None:
+            return None
+        pos1 = int(pos1)
+        return Inversion(acc, pos0, pos1)
 
-def makeHGVS(s):
-    v = parseHGVS(s)
-    if v['type'] == 'substitution':
-        return Substitution(v['accession'], v['position'], v['reference'], v['variant'])
-    if v['type'] == 'repeat':
-        return Repeat(v['accession'], v['start-position'], v['stop-position'], v['count'])
-    if v['type'] == 'insertion':
-        return Insertion(v['accession'], v['after-position'], v['before-position'], v['sequence'])
-    if v['type'] == 'deletion':
-        return Deletion(v['accession'], v['first-position'], v['last-position'])
-    if v['type'] == 'duplication':
-        return Duplication(v['accession'], v['first-position'], v['last-position'])
-    if v['type'] == 'deletion-insertion':
-        return DeletionInsertion(v['accession'], v['first-position'], v['last-position'], v['sequence'])
+    m = gvarDIn.match(s)
+    if m:
+        if pos1 is None:
+            pos1 = pos0
+        else:
+            pos1 = int(pos1)
+        ss = m.groups()
+        return DeletionInsertion(acc, pos0, pos1, ss[0])
 
-def applyVariant(s, v):
-    if v['type'] == 'substitution':
-        p = v['position'] - 1
-        l = rope.substr(s, 0, p)
-        m = rope.atom(v['variant'])
-        r = rope.substr(s, p + 1, len(s))
-        return rope.join([l, m, r])
-    elif v['type'] == 'insertion':
-        p = v['after-position']
-        q = v['before-position'] - 1
-        assert p == q
-        l = rope.substr(s, 0, p)
-        m = rope.atom(v['sequence'])
-        r = rope.substr(s, p, len(s))
-        return rope.join([l, m, r])
-    elif v['type'] == 'deletion':
-        p = v['first-position'] - 1
-        q = v['last-position']
-        l = rope.substr(s, 0, p)
-        r = rope.substr(s, q, len(s))
-        return rope.concat(l, r)
+    m = gvarRpt.match(s)
+    if m:
+        ss = m.groups()
+        if ss[0] is not None and pos1 is None:
+            pos1 = pos0 + len(ss[0]) - 1
+        elif pos1 is None:
+            pos1 = pos0
+        else:
+            pos1 = int(pos1)
+        cnt = int(ss[1])
+        return Repeat(acc, pos0, pos1, cnt)
+
     return None
 
