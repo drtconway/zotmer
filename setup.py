@@ -21,7 +21,7 @@ setup(name='zotmer',
         license='Apache2',
         keywords='bioinformatics genomics pathogenomics',
         packages=find_packages(),
-        install_requires=['docopt', 'tqdm', 'pykmer>=0.3.0', 'requests'],
+        install_requires=['docopt', 'tqdm', 'pykmer>=0.4.0', 'requests'],
         entry_points = {
             'console_scripts' : ['zot=zotmer.cli:main']
         },
