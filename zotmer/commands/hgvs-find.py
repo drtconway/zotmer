@@ -40,7 +40,7 @@ import sys
 import zipfile
 
 import docopt
-import progressbar
+import tqdm
 import yaml
 
 from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, kmersWithPosList, murmer, rc, render
@@ -49,10 +49,10 @@ from pykmer.misc import unionfind
 from pykmer.sparse import sparse
 from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, ksDistance2, logGammaP, logGammaQ, logLowerGamma
 from zotmer.library.align import glocalAlignment, revComp
+from zotmer.library.debruijn import interpolate
 from zotmer.library.hgvs import makeHGVS, refSeq2Hg19
 from zotmer.library.files import readKmersAndCounts
-from zotmer.library.rope import rope
-from zotmer.library.trim import trim
+from zotmer.library.reads import reads
 
 def sqr(x):
     return x*x
@@ -127,52 +127,6 @@ def computeBias(K, zs, verbose = False):
         S.add(v)
     return (S.mean(), S.var())
 
-
-class Interpolator(object):
-    def __init__(self, K, xs):
-        self.K = K
-        self.M = ((1 << (2*K)) - 1)
-        self.S = 2*(K-1)
-        self.xs = xs
-
-    def succ(self, x):
-        y0 = (x << 2) & self.M
-        for i in range(4):
-            y = y0 + i
-            if y in self.xs:
-                yield y
-
-    def pred(self, x):
-        y0 = x >> 2
-        for i in range(4):
-            y = y0 + (i << self.S)
-            if y in self.xs:
-                yield y
-
-    def path(self, xb, xe, n):
-        stk = [(xb, n+K, [])]
-        while len(stk) > 0:
-            (x0, n0, p0) = stk.pop()
-            if n0 == 0:
-                if x0 == xe:
-                    yield p0
-                continue
-            n1 = n0 - 1
-            for x1 in self.succ(x0):
-                p1 = p0 + [x0]
-                stk.append((x1, n1, p1))
-
-    def interpolate(self, xb, xe, n):
-        sMax = 0
-        pMax = None
-        for p in self.path(xb, xe, n):
-            s = 0
-            for x in p:
-                s += self.xs[x]
-            if s > sMax:
-                sMax = s
-                pMax = p
-        return pMax
 
 def hamming(K, xs, s):
     cs = [0 for j in range(K+1)]
@@ -529,7 +483,7 @@ def ball(K, xs, d):
             ys |= set(neigh(K, x, i))
     return ys
 
-def context(k, v, sf, l):
+def context(k, v, l):
     (wtSeq, mutSeq) = v.context(l)
 
     (wtKSeq, mutKSeq) = v.context(k)
@@ -548,6 +502,50 @@ def context(k, v, sf, l):
     mutXs.sort()
 
     return (wtXs, wtSeq, mutXs, mutSeq)
+
+def makeIndexedVariant(v, K, L):
+    (wtSeq, mutSeq) = v.context(K)
+
+    r = {}
+    r['hgvs'] = str(v)
+    r['wtSeq'] = wtSeq
+    r['mutSeq'] = mutSeq
+
+    if not v.anonymous():
+        # A regular variant
+
+        wtXs = set(kmers(K, wtSeq, False))
+        mutXs = set(kmers(K, mutSeq, False))
+
+        com = wtXs & mutXs
+        wtXs -= com
+        mutXs -= com
+
+        if len(wtXs) == 0 or len(mutXs) == 0:
+            print >> sys.stderr, "variant has no distinguishing k-mers: %s" % (str(v),)
+            print >> sys.stderr, wtSeq
+            print >> sys.stderr, mutSeq
+            return None
+    else:
+        # An anonymous sequence, so extract the flanking k-mers
+        rng = v.range()
+        big = v.loadAccession()
+        lhsSt = rng[0] - 1 - 2*K
+        lhsEn = rng[0] - 1
+        lhs = big[lhsSt:lhsEn]
+        rhsSt = rng[1] - 1
+        rhsEn = rng[1] - 1 + 2*K
+        rhs = big[rhsSt:rhsEn]
+        r['mutLhs'] = lhs
+        r['mutRhs'] = rhs
+
+    return r
+
+def addProbesToIdx(n, xs, idx):
+    for x in xs:
+        if x not in idx:
+            idx[x] = set([])
+        idx[x].add(n)
 
 class SequenceFactory(object):
     def __init__(self, home):
@@ -576,6 +574,8 @@ def main(argv):
 
     L = int(opts['-L'])
 
+    verbose = opts['-v']
+
     d = "."
     if opts['-g']:
         d = opts['-g']
@@ -602,75 +602,53 @@ def main(argv):
         rs = []
         for (acc, vs) in vx.iteritems():
             for v in vs:
-                (wtYs, wtSeq, mutYs, mutSeq) = context(K, v, sf, L)
-                if len(wtYs) == 0 or len(mutYs) == 0:
-                    print >> sys.stderr, "variant has no distinguishing k-mers: %s" % (str(v),)
-                    print >> sys.stderr, wtSeq
-                    print >> sys.stderr, mutSeq
-                    continue
-                (wtKSeq, mutKSeq) = v.context(K)
-                r = {}
-                r['hgvs'] = str(v)
-                r['wt'] = [render(K, y) for y in wtYs]
-                r['wtSeq'] = wtSeq
-                r['wtKSeq'] = wtKSeq
-                r['mut'] = [render(K, y) for y in mutYs]
-                r['mutSeq'] = mutSeq
-                r['mutKSeq'] = mutKSeq
-                rs.append(r)
+                r = makeIndexedVariant(v, K, L)
+                if r is not None:
+                    rs.append(r)
 
         with open(opts['<index>'], 'w') as f:
-            yaml.safe_dump(rs, f)
+            yaml.safe_dump(rs, f, default_flow_style=False)
 
         return
 
     fmt = set(opts['-F'].split(','))
 
-    if opts['-v']:
+    if verbose:
         print >> sys.stderr, "loading index."
 
     with open(opts['<index>']) as f:
-        itms = yaml.load(f)
+        hgvsVars = yaml.load(f)
 
-    hgvsVars = []
-    wtProbes = []
-    wtRes = []
-    wtSeq = []
-    wtKSeq = []
-    mutProbes = []
-    mutRes = []
-    mutSeq = []
-    mutKSeq = []
-    hs = []
+    V = len(hgvsVars)
+
     wtIdx = {}
     mutIdx = {}
-    for itm in itms:
-        n = len(hs)
-        h = itm['hgvs']
-        hs.append(h)
-        hgvsVars.append(makeHGVS(h))
-        wtProbes.append(set([]))
-        wtRes.append({})
-        wtSeq.append(itm['wtSeq'])
-        wtKSeq.append(itm['wtKSeq'])
-        for x in itm['wt']:
-            y = kmer(x)
-            if y not in wtIdx:
-                wtIdx[y] = set([])
-            wtIdx[y].add(n)
-            wtProbes[n].add(y)
-        mutProbes.append(set([]))
-        mutRes.append({})
-        mutSeq.append(itm['mutSeq'])
-        mutKSeq.append(itm['mutKSeq'])
-        for x in itm['mut']:
-            y = kmer(x)
-            if y not in mutIdx:
-                mutIdx[y] = set([])
-            mutIdx[y].add(n)
-            mutProbes[n].add(y)
+    mutNegIdx = {}
 
-    if opts['-v']:
+    for n in range(V):
+        itm = hgvsVars[n]
+        h = itm['hgvs']
+        v = makeHGVS(h)
+        itm['var'] = v
+        wtProbes = set(kmers(K, itm['wtSeq'], False))
+        if not v.anonymous():
+            mutProbes = set(kmers(K, itm['mutSeq'], False))
+            com = wtProbes - mutProbes
+            wtProbes -= com
+            mutProbes -= com
+            mutNegProbes = set([])
+        else:
+            mutProbes = set(kmers(K, itm['mutLhs'], False)) | set(kmers(K, itm['mutRhs'], False))
+            mutNegProbes = wtProbes - mutProbes
+        itm['wtProbes'] = wtProbes
+        itm['mutProbes'] = mutProbes
+        itm['mutNegProbes'] = mutNegProbes
+
+        addProbesToIdx(n, wtProbes, wtIdx)
+        addProbesToIdx(n, mutProbes, mutIdx)
+        addProbesToIdx(n, mutNegProbes, mutNegIdx)
+
+    if verbose:
         print >> sys.stderr, "done."
 
     combineStrands = True
@@ -681,44 +659,40 @@ def main(argv):
     if opts['-p']:
         pulldown = {}
 
-    rn = 0
-    M = (1 << 13) - 1
+    wtRes = [{} for n in range(V)]
+    mutRes = [{} for n in range(V)]
 
-    bar = progressbar.ProgressBar(max_value=progressbar.UnknownLength)
-    bar.start()
-    for fn in opts['<input>']:
-        with openFile(fn) as f:
-            for fq in readFastq(f):
-                rn += 1
-                if (rn & M) == 0:
-                    bar.update(rn/1000.0)
-                if (rn & M) == 0 and opts['-v']:
-                    print >> sys.stderr, 'read pairs processed: %d' % (rn,)
-                xs = kmersList(K, fq[1], True)
+    for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
+        fq = itm[0][0]      # Read, End-0
+        xs = itm[1][0][0]   # Kmers, End-0, Strand-0
 
-                wtHits = set([])
+        wtHits = set([])
+        mutHits = set([])
+        mutNegHits = set([])
+        for x in xs:
+            if x in wtIdx:
+                wtHits |= wtIdx[x]
+            if x in mutIdx:
+                mutHits |= mutIdx[x]
+            if x in mutNegIdx:
+                mutNegHits |= mutNegIdx[x]
+
+        if len(wtHits) > 0:
+            for n in wtHits:
+                wtXs = wtRes[n]
                 for x in xs:
-                    if x in wtIdx:
-                        wtHits |= wtIdx[x]
-                if len(wtHits) > 0:
-                    for n in wtHits:
-                        wtXs = wtRes[n]
-                        for x in xs:
-                            wtXs[x] = 1 + wtXs.get(x, 0)
-                mutHits = set([])
+                    wtXs[x] = 1 + wtXs.get(x, 0)
+
+        mutHits -= mutNegHits
+        if len(mutHits) > 0:
+            for n in mutHits:
+                mutXs = mutRes[n]
                 for x in xs:
-                    if x in mutIdx:
-                        mutHits |= mutIdx[x]
-                if len(mutHits) > 0:
-                    for n in mutHits:
-                        mutXs = mutRes[n]
-                        for x in xs:
-                            mutXs[x] = 1 + mutXs.get(x, 0)
-                        if pulldown is not None:
-                            if n not in pulldown:
-                                pulldown[n] = []
-                            pulldown[n] += fq
-    bar.finish()
+                    mutXs[x] = 1 + mutXs.get(x, 0)
+                if pulldown is not None:
+                    if n not in pulldown:
+                        pulldown[n] = []
+                    pulldown[n] += fq
 
     B = opts['-B']
     S = float(opts['-S'])
@@ -732,7 +706,7 @@ def main(argv):
         zf = zipfile.ZipFile(opts['-p'], 'w', zipfile.ZIP_DEFLATED)
 
     hdrShown = False
-    for n in range(len(hs)):
+    for n in range(V):
 
         xs = [x for x in wtRes[n].values()]
         xh0 = hist(xs)
@@ -744,8 +718,18 @@ def main(argv):
         yh = binHist(yh0, B, S)
         mutMedian = histMedian(yh)
 
-        (wtHamC, wtHamW, wtHits) = hamming(K, wtRes[n], wtKSeq[n])
-        (mutHamC, mutHamW, mutHits) = hamming(K, mutRes[n], mutKSeq[n])
+        wtSeq = hgvsVars[n]['wtSeq']
+        (wtHamC, wtHamW, wtHits) = hamming(K, wtRes[n], wtSeq)
+
+        mutSeq = hgvsVars[n]['mutSeq']
+        v = hgvsVars[n]['var']
+        if v.anonymous(): 
+            lhs = kmersList(K, hgvsVars[n]['mutLhs'], False)[-1]
+            rhs = kmersList(K, hgvsVars[n]['mutRhs'], False)[-1]
+            p = interpolate(K, mutRes[n], lhs, rhs, len(v.sequence()))
+            if p is not None:
+                mutSeq = p
+        (mutHamC, mutHamW, mutHits) = hamming(K, mutRes[n], mutSeq)
 
         wtHits.sort(key=lambda itm: itm[3])
         wtMin = 0
@@ -765,7 +749,7 @@ def main(argv):
         wtD = ksDistance2(wtCdf, nullCdf)[0]
         mutD = ksDistance2(mutCdf, nullCdf)[0]
 
-        h = hs[n]
+        h = hgvsVars[n]['hgvs']
         hdrs = ['n']
         fmts = ['%d']
         outs = [n]
@@ -800,15 +784,16 @@ def main(argv):
                 for i in range(1, len(rds), 4):
                     q = rds[i]
                     qrc = revComp(q)
-                    r0 = glocalAlignment(mutSeq[n], q)
-                    r1 = glocalAlignment(mutSeq[n], qrc)
+                    mutSeq = hgvsVars[n]['mutSeq']
+                    r0 = glocalAlignment(mutSeq, q)
+                    r1 = glocalAlignment(mutSeq, qrc)
                     r = r0
                     if r1[0] > r0[0]:
                         r = r1
                     aln.append(r)
                 stuff = {}
-                stuff['reference'] = wtSeq[n]
-                stuff['variant'] = mutSeq[n]
+                stuff['reference'] = hgvsVars[n]['wtSeq']
+                stuff['variant'] = hgvsVars[n]['mutSeq']
                 stuff['alignments'] = aln
                 zf.writestr(h + '.aln', yaml.safe_dump(stuff))
 

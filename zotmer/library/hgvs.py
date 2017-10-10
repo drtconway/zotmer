@@ -46,6 +46,9 @@ class HGVS(object):
         assert self.seqFac is not None
         return self.seqFac[self.accession()]
 
+    def anonymous(self):
+        return False
+
     def apply(self, s):
         (p,q) = self.range()
         p -= 1
@@ -88,6 +91,9 @@ class Substitution(HGVS):
         self.ref = ref
         self.var = var
 
+    def size(self):
+        return 1
+
     def range(self):
         return (self.pos, self.pos+1)
 
@@ -102,6 +108,9 @@ class Deletion(HGVS):
         super(Deletion, self).__init__(acc)
         self.fst = fst
         self.lst = lst
+
+    def size(self):
+        return 0
 
     def range(self):
         return (self.fst, self.lst+1)
@@ -121,6 +130,9 @@ class Insertion(HGVS):
         assert self.aft + 1 == bef
         self.seq = seq
 
+    def size(self):
+        return len(self.seq)
+
     def range(self):
         return (self.aft, self.aft)
 
@@ -130,12 +142,44 @@ class Insertion(HGVS):
     def __str__(self):
         return '%s:g.%d_%dins%s' % (self.acc, self.aft, self.aft+1, self.seq)
 
+class Anonymous(HGVS):
+    def __init__(self, acc, aft, bef, iln):
+        super(Anonymous, self).__init__(acc)
+        self.aft = aft
+        assert self.aft + 1 == bef
+        self.iln = iln
+        self.seq = None
+
+    def anonymous(self):
+        return True
+
+    def setSequence(self, seq):
+        assert len(seq) == self.iln
+        self.seq = seq
+
+    def size(self):
+        return self.iln
+
+    def range(self):
+        return (self.aft, self.aft)
+
+    def sequence(self):
+        if self.seq is not None:
+            return self.seq
+        return self.iln * 'N'
+
+    def __str__(self):
+        return '%s:g.%d_%dins%d' % (self.acc, self.aft, self.aft+1, self.iln)
+
 class DeletionInsertion(HGVS):
     def __init__(self, acc, fst, lst, seq):
         super(DeletionInsertion, self).__init__(acc)
         self.fst = fst
         self.lst = lst
         self.seq = seq
+
+    def size(self):
+        return len(self.seq)
 
     def range(self):
         return (self.fst, self.lst+1)
@@ -148,6 +192,37 @@ class DeletionInsertion(HGVS):
             return '%s:g.%ddelins%s' % (self.acc, self.fst, self.seq)
         return '%s:g.%d_%ddelins%s' % (self.acc, self.fst, self.lst, self.seq)
 
+class AnonymousDelIns(HGVS):
+    def __init__(self, acc, fst, lst, iln):
+        super(AnonymousDelIns, self).__init__(acc)
+        self.fst = fst
+        self.lst = lst
+        self.iln = iln
+        self.seq = None
+
+    def anonymous(self):
+        return True
+
+    def setSequence(self, seq):
+        assert len(seq) == self.iln
+        self.seq = seq
+
+    def size(self):
+        return self.iln
+
+    def range(self):
+        return (self.fst, self.lst+1)
+
+    def sequence(self):
+        if self.seq is not None:
+            return self.seq
+        return self.iln * 'N'
+
+    def __str__(self):
+        if self.fst == self.lst:
+            return '%s:g.%ddelins%d' % (self.acc, self.fst, self.iln)
+        return '%s:g.%d_%ddelins%d' % (self.acc, self.fst, self.lst, self.iln)
+
 class Repeat(HGVS):
     def __init__(self, acc, fst, lst, cnt):
         super(Repeat, self).__init__(acc)
@@ -155,6 +230,9 @@ class Repeat(HGVS):
         self.lst = lst
         self.cnt = cnt
         self.seq = None
+
+    def size(self):
+        return self.cnt * (self.lst - self.fst + 1)
 
     def range(self):
         return (self.fst, self.lst+1)
@@ -177,6 +255,9 @@ class Duplication(HGVS):
         self.lst = lst
         self.seq = None
 
+    def size(self):
+        return 2 * (self.lst - self.fst + 1)
+
     def range(self):
         return (self.fst, self.lst+1)
 
@@ -198,6 +279,9 @@ class Inversion(HGVS):
         self.lst = lst
         self.seq = None
 
+    def size(self):
+        return self.lst - self.fst + 1
+
     def range(self):
         return (self.fst, self.lst+1)
 
@@ -216,8 +300,10 @@ gvarSub = re.compile('([ACGT])>([ACGT])$')
 gvarDel = re.compile('del([ACGT]+)?$')
 gvarDup = re.compile('dup([ACGT]+)?$')
 gvarIns = re.compile('ins([ACGT]+)$')
+gvarAnI = re.compile('ins([0-9]+)$')
 gvarInv = re.compile('inv$')
 gvarDIn = re.compile('delins([ACGT]+)$')
+gvarAnD = re.compile('delins([0-9]+)$')
 gvarRpt = re.compile('([ACGT]+)?\[([0-9]+)\]$')
 
 def makeHGVS(txt):
@@ -269,6 +355,15 @@ def makeHGVS(txt):
         ss = m.groups()
         return Insertion(acc, pos0, pos1, ss[0])
 
+    m = gvarAnI.match(s)
+    if m:
+        if pos1 is None:
+            return None
+        pos1 = int(pos1)
+        ss = m.groups()
+        l = int(ss[0])
+        return Anonymous(acc, pos0, pos1, l)
+
     m = gvarInv.match(s)
     if m:
         if pos1 is None:
@@ -284,6 +379,16 @@ def makeHGVS(txt):
             pos1 = int(pos1)
         ss = m.groups()
         return DeletionInsertion(acc, pos0, pos1, ss[0])
+
+    m = gvarAnD.match(s)
+    if m:
+        if pos1 is None:
+            pos1 = pos0
+        else:
+            pos1 = int(pos1)
+        ss = m.groups()
+        l = int(ss[0])
+        return AnonymousDelIns(acc, pos0, pos1, l)
 
     m = gvarRpt.match(s)
     if m:
