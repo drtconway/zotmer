@@ -345,7 +345,7 @@ def makeHGVS(txt):
             pos1 = pos0
         else:
             pos1 = int(pos1)
-        return Deletion(acc, pos0, pos1)
+        return Duplication(acc, pos0, pos1)
 
     m = gvarIns.match(s)
     if m:
