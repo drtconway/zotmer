@@ -64,8 +64,9 @@ class HGVS(object):
 
     def context(self, w):
         wt = self.range()
-        vSeq = self.sequence()
-        d = wt[0] - wt[1] + len(vSeq)
+        wt = (wt[0] - 1, wt[1] - 1) # convert to zero offset
+        n = self.size()
+        d = wt[0] - wt[1] + n
         mut = (wt[0], wt[1] + d)
 
         seq = self.loadAccession()
@@ -73,10 +74,10 @@ class HGVS(object):
 
         r = self.apply(s)
 
-        wt = (wt[0]-w, wt[1]+w)
+        wt = (wt[0]-w+1, wt[1]+w-1)
         wt = (max(0, wt[0]), min(wt[1], len(s)))
 
-        mut = (mut[0]-w, mut[1]+w)
+        mut = (mut[0]-w+1, mut[1]+w-1)
         mut = (max(0, mut[0]), min(mut[1], len(r)))
 
         wtSeq = s[wt[0]:wt[1]]

@@ -43,7 +43,7 @@ import docopt
 import tqdm
 import yaml
 
-from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, kmersWithPosList, murmer, rc, render
+from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, kmersWithPosList, kmersWithPosLists, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.sparse import sparse
@@ -450,38 +450,90 @@ def chiSquaredPval(x, n, lowerTail=True, logP=False):
     else:
         return math.exp(lp)
 
-def pairs(xs):
-    assert len(xs) & 1 == 0
-    i = 0
-    while i + 1 < len(xs):
-        yield (xs[i], xs[i + 1])
-        i += 2
+def posKmer(K, x, p):
+    return x | (p << (2*K))
 
-def both(xs, ys):
-    while True:
-        try:
-            x = xs.next()
-            y = ys.next()
-            yield(x, y)
-        except StopIteration:
-            return
+def unpackPosKmer(K, v):
+    M = (1 << (2*K)) - 1
+    x = v&M
+    p = v >> (2*K)
+    return (x, p)
 
-def neigh(K, x):
-    r = []
-    for j in xrange(K):
-        for y in [1,2,3]:
-            z = x ^ (y << (2*j))
-            r.append(z)
-    return r
+class PositionalKmerIndex(object):
+    def __init__(self, K):
+        self.K = K
+        self.N = 0
+        self.idx = {}
 
-def ball(K, xs, d):
-    ys = set(xs)
-    i = 0
-    while i < d:
-        i += 1
-        for x in xs:
-            ys |= set(neigh(K, x, i))
-    return ys
+    def addSeq(self, seq):
+        n = self.N
+        self.N += 1
+        for (x,p) in kmersWithPosList(self.K, seq, False):
+            p -= 1
+            if x not in self.idx:
+                self.idx[x] = []
+            self.idx[x].append((n, p))
+        return n
+
+    def find(self, seq):
+        hits = {}
+        (xs, ys) = kmersWithPosLists(self.K, seq)
+        for (zs, s) in [(xs, True), (ys, False)]:
+            for (x,p) in zs:
+                if x not in self.idx:
+                    continue
+                p -= 1
+                for (n,q) in self.idx[x]:
+                    qp = (q - p, s)
+                    if n not in hits:
+                        hits[n] = {}
+                    if qp not in hits[n]:
+                        hits[n][qp] = 0
+                    hits[n][qp] += 1
+
+        cand = {}
+        for (n, ps) in hits.items():
+            for ((p,s),c) in ps.items():
+                if n not in cand:
+                    cand[n] = (c, [(p, s)])
+                elif c > cand[n][0]:
+                    cand[n] = (c, [(p, s)])
+                elif c == cand[n][0]:
+                    cand[n][1].append((p, s))
+
+        res = []
+        for n in cand.keys():
+            (c, pss) = cand[n]
+            for (p0, s) in pss:
+                if s:
+                    zs = [posKmer(self.K, x, p0 + p - 1) for (x,p) in xs]
+                else:
+                    zs = [posKmer(self.K, y, p0 + p - 1) for (y,p) in ys]
+                res.append((n, zs))
+        return res
+
+def nearestPosKmers(K, seq, xps):
+    idx = {}
+    res = {}
+    for (x,p) in kmersWithPosList(K, seq, False):
+        p -= 1
+        assert p not in idx
+        idx[p] = x
+        res[p] = [K+1, 0]
+
+    for xp in xps.iterkeys():
+        (x,p) = unpackPosKmer(K, xp)
+        if p not in idx:
+            continue
+        y = idx[p]
+        d = ham(x, y)
+        if d > res[p][0]:
+            continue
+        if d < res[p][0]:
+            res[p] = [d, xps[xp]]
+        else:
+            res[p][1] = max(res[p][1], xps[xp])
+    return sorted([(p, d, c) for (p, (d,c)) in res.items()])
 
 def context(k, v, l):
     (wtSeq, mutSeq) = v.context(l)
@@ -625,14 +677,17 @@ def main(argv):
     mutIdx = {}
     mutNegIdx = {}
 
+    wtPosIdx = PositionalKmerIndex(K)
+    mutPosIdx = PositionalKmerIndex(K)
+
     for n in range(V):
         itm = hgvsVars[n]
         h = itm['hgvs']
         v = makeHGVS(h)
         itm['var'] = v
-        wtProbes = set(kmers(K, itm['wtSeq'], False))
+        wtProbes = set(kmersWithPosList(K, itm['wtSeq'], False))
         if not v.anonymous():
-            mutProbes = set(kmers(K, itm['mutSeq'], False))
+            mutProbes = set(kmersWithPosList(K, itm['mutSeq'], False))
             com = wtProbes - mutProbes
             wtProbes -= com
             mutProbes -= com
@@ -648,6 +703,9 @@ def main(argv):
         addProbesToIdx(n, mutProbes, mutIdx)
         addProbesToIdx(n, mutNegProbes, mutNegIdx)
 
+        wtPosIdx.addSeq(itm['wtSeq'])
+        mutPosIdx.addSeq(itm['mutSeq'])
+
     if verbose:
         print >> sys.stderr, "done."
 
@@ -662,37 +720,167 @@ def main(argv):
     wtRes = [{} for n in range(V)]
     mutRes = [{} for n in range(V)]
 
-    for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
-        fq = itm[0][0]      # Read, End-0
-        xs = itm[1][0][0]   # Kmers, End-0, Strand-0
+    rn = 0
+    #for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
+    for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=False, both=True, verbose=verbose):
+        rn += 1
+        #fq = itm[0][0]         # Read, End-0
+        #xs = itm[1][0][0]      # Kmers, End-0, Strand-0
+        fq = itm[0]      # Read, End-0
 
-        wtHits = set([])
-        mutHits = set([])
-        mutNegHits = set([])
-        for x in xs:
-            if x in wtIdx:
-                wtHits |= wtIdx[x]
-            if x in mutIdx:
-                mutHits |= mutIdx[x]
-            if x in mutNegIdx:
-                mutNegHits |= mutNegIdx[x]
+        for (n, pxs) in wtPosIdx.find(fq[1]):
+            for px in pxs:
+                wtRes[n][px] = 1 + wtRes[n].get(px, 0)
 
+        for (n, pxs) in mutPosIdx.find(fq[1]):
+            for px in pxs:
+                mutRes[n][px] = 1 + mutRes[n].get(px, 0)
+
+        if False:
+            wtHits = set([])
+            mutHits = set([])
+            mutNegHits = set([])
+            for x in xs:
+                if x in wtIdx:
+                    wtHits |= wtIdx[x]
+                if x in mutIdx:
+                    mutHits |= mutIdx[x]
+                if x in mutNegIdx:
+                    mutNegHits |= mutNegIdx[x]
+
+            if len(wtHits) > 0:
+                for n in wtHits:
+                    wtXs = wtRes[n]
+                    for x in xs:
+                        wtXs[x] = 1 + wtXs.get(x, 0)
+
+            mutHits -= mutNegHits
+            if len(mutHits) > 0:
+                for n in mutHits:
+                    mutXs = mutRes[n]
+                    for x in xs:
+                        mutXs[x] = 1 + mutXs.get(x, 0)
+                    if pulldown is not None:
+                        if n not in pulldown:
+                            pulldown[n] = []
+                        pulldown[n] += fq
+
+    Q = 10
+    nullCdf = pdf2cdf(nullModelPdf(K))
+
+    hdrShown = False
+    for n in range(V):
+        h = hgvsVars[n]['hgvs']
+
+        wtSeq = hgvsVars[n]['wtSeq']
+        wtHits = nearestPosKmers(K, wtSeq, wtRes[n])
+        wtMin = 0
         if len(wtHits) > 0:
-            for n in wtHits:
-                wtXs = wtRes[n]
-                for x in xs:
-                    wtXs[x] = 1 + wtXs.get(x, 0)
+            wtMin = min([c for (p, d, c) in wtHits])
+        wtHs = [0 for j in range(K+1)]
+        for (p, d, c) in wtHits:
+            if d <= K:
+                wtHs[d] += 1
+        wtCdf = counts2cdf(wtHs)
+        wtD = ksDistance2(wtCdf, nullCdf)[0]
 
-        mutHits -= mutNegHits
+        mutSeq = hgvsVars[n]['mutSeq']
+        mutHits = nearestPosKmers(K, mutSeq, mutRes[n])
+        mutMin = 0
         if len(mutHits) > 0:
-            for n in mutHits:
-                mutXs = mutRes[n]
-                for x in xs:
-                    mutXs[x] = 1 + mutXs.get(x, 0)
-                if pulldown is not None:
-                    if n not in pulldown:
-                        pulldown[n] = []
-                    pulldown[n] += fq
+            mutMin = min([c for (p, d, c) in mutHits])
+        mutHs = [0 for j in range(K+1)]
+        for (p, d, c) in mutHits:
+            if d <= K:
+                mutHs[d] += 1
+        mutCdf = counts2cdf(mutHs)
+        mutD = ksDistance2(mutCdf, nullCdf)[0]
+
+        hdrs = ['n']
+        fmts = ['%d']
+        outs = [n]
+
+        wtAllele = ((wtMin > Q) and (wtD > 0.8))
+        mutAllele = ((mutMin > Q) and (mutD > 0.8))
+        resV =  1*wtAllele + 2*mutAllele
+        res = ['null', 'wt', 'mut', 'wt/mut'][resV]
+
+        hdrs += ['res']
+        fmts += ['%s']
+        outs += [res]
+
+        hdrs += ['wtMin', 'mutMin']
+        fmts += ['%d', '%d']
+        outs += [wtMin, mutMin]
+
+        hdrs += ['wtD', 'mutD']
+        fmts += ['%g', '%g']
+        outs += [wtD, mutD]
+
+        if 'pos' in fmt:
+            wtLen = len(wtSeq) - K + 1
+            mutLen = len(mutSeq) - K + 1
+            seqLen = max(wtLen, mutLen)
+            i = 0
+            j = 0
+            for p in range(seqLen):
+                wd = 0
+                wc = 0
+                if i < len(wtHits) and wtHits[i][0] == p:
+                    wd = wtHits[i][1]
+                    if wd == K+1:
+                        wd = 0
+                    wc = wtHits[i][2]
+                    i += 1
+                md = 0
+                mc = 0
+                if j < len(mutHits) and mutHits[j][0] == p:
+                    md = mutHits[j][1]
+                    if md == K+1:
+                        md = 0
+                    mc = mutHits[j][2]
+                    j += 1
+
+                hdrs1 = hdrs + ['pos', 'wtHam', 'wtCnt', 'mutHam', 'mutCnt']
+                fmts1 = fmts + ['%d', '%d', '%d', '%d', '%d']
+                outs1 = outs + [p, wd, wc, md, mc]
+                    
+                hdrs1 += ['hgvs']
+                fmts1 += ['%s']
+                outs1 += [h]
+
+                if not hdrShown:
+                    hdrShown = True
+                    print '\t'.join(hdrs1)
+                print '\t'.join(fmts1) % tuple(outs1)
+            continue
+
+        if 'ham' in fmt:
+            for j in range(K+1):
+                hdrs1 = hdrs + ['ham', 'wtCnt', 'wtCum', 'mutCnt', 'mutCum', 'nullCum']
+                fmts1 = fmts + ['%d', '%d', '%g', '%d', '%g', '%g']
+                outs1 = outs + [j, wtHs[j], wtCdf[j], mutHs[j], mutCdf[j], nullCdf[j]]
+
+                hdrs1 += ['hgvs']
+                fmts1 += ['%s']
+                outs1 += [h]
+
+                if not hdrShown:
+                    hdrShown = True
+                    print '\t'.join(hdrs1)
+                print '\t'.join(fmts1) % tuple(outs1)
+            continue
+
+        hdrs += ['hgvs']
+        fmts += ['%s']
+        outs += [h]
+
+        if not hdrShown:
+            hdrShown = True
+            print '\t'.join(hdrs)
+        print '\t'.join(fmts) % tuple(outs)
+
+    return
 
     B = opts['-B']
     S = float(opts['-S'])
