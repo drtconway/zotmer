@@ -13,14 +13,14 @@ class Interpolator1(object):
         y0 = (x << 2) & self.M
         for i in range(4):
             y = y0 + i
-            if y in self.xs:
+            if self.xs.get(y, 0) > 10:
                 yield y
 
     def pred(self, x):
         y0 = x >> 2
         for i in range(4):
             y = y0 + (i << self.S)
-            if y in self.xs:
+            if self.xs.get(y, 0) > 10:
                 yield y
 
     def path(self, xb, xe, n):
@@ -34,6 +34,19 @@ class Interpolator1(object):
             n1 = n0 - 1
             for x1 in self.succ(x0):
                 p1 = p0 + [x0]
+                stk.append((x1, n1, p1))
+
+    def pathTo(self, xb, xe, N):
+        stk = [(xb, 0, [xb])]
+        while len(stk) > 0:
+            (x0, n0, p0) = stk.pop()
+            if x0 == xe:
+                yield p0
+            n1 = n0 + 1
+            if n1 == N:
+                continue
+            for x1 in self.succ(x0):
+                p1 = p0 + [x1]
                 stk.append((x1, n1, p1))
 
     def interpolate(self, xb, xe, n):
@@ -153,3 +166,17 @@ def interpolateBetween(K, xs, xb, xe, lo, hi):
     I2 = Interpolator2(K, xs)
     p2 = I2.interpolateBetween(xb, xe, lo, hi)
     return p2
+
+def pathBetween(K, xs, xb, xe, N):
+    I1 = Interpolator1(K, xs)
+    return I1.pathTo(xb, xe, N)
+
+def onlyPathBetween(K, xs, xb, xe, N):
+    res = None
+    for pth in pathBetween(K, xs, xb, xe, N):
+        if res is None:
+            res = pth
+        else:
+            # multiple paths
+            return None
+    return res

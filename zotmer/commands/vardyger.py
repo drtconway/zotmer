@@ -7,6 +7,7 @@ Usage:
 
 Options:
     -k K            value of K to use - must be even. [default: 24]
+    -s              strict path validation
     -v              produce verbose output
 """
 
@@ -22,7 +23,7 @@ import yaml
 from pykmer.basics import ham, kmersList, kmersWithPosList, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.reads import reads
-from zotmer.library.debruijn import interpolate, interpolateBetween
+from zotmer.library.debruijn import interpolate, interpolateBetween, pathBetween
 
 def pairs(xs):
     N = len(xs)
@@ -42,6 +43,8 @@ def findDup(refFst, refLst, xFst, xLst):
             if b not in refLst:
                 continue
             for a in refLst[b]:
+                if a == c:
+                    continue
                 if a not in refFst:
                     continue
                 yield (a, b, c, d)
@@ -69,6 +72,20 @@ def positions(posIdx, J, a, b, c, d):
                 res = []
             res.append((pa, pb, pc, pd))
     return res
+
+def renderPath(K, xs):
+    if len(xs) == 0:
+        return ''
+    res = [render(K, xs[0])]
+    for x in xs[1:]:
+        res.append('ACGT'[x&3])
+    return ''.join(res)
+
+def renderPath1(K, xs, X):
+    J = K // 2
+    #for i in range(len(xs)):
+    #    print '%d\t%s\t%d' % (i, render(K, xs[i]), X.get(xs[i], 0))
+    print '%d\t%s' % (len(xs) - 1, renderPath(K, xs)[J:-J])
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
@@ -169,6 +186,18 @@ def main(argv):
 
                 dd = pp[2] - pp[0]
 
+                if opts['-s']:
+                    fstPath = pathBetween(K, xs, ab, cb, dd+1)
+                    sndPath = pathBetween(K, xs, cb, cd, dd+1)
+
+                    if fstPath is None:
+                        continue
+                    if sndPath is None:
+                        continue
+
+                    if fstPath[J:-J] != sndPath[J:-J]:
+                        continue
+
                 pa = pp[0]
                 pc = pp[2]
 
@@ -178,10 +207,7 @@ def main(argv):
 
                 m = (cab + ccd) / 2.0
                 # Assume the true std dev is 10% of the mean
-                w = abs(m - ccb) / (0.1*m)
-
-                if w > 4.0:
-                    continue
+                w = ccb / m
 
                 hgvs = '%s:c.%d_%ddup' % (names[n], pa, pc - 1)
                 print '%s\t%s\t%d\t%s\t%d\t%s\t%d\t%d\t%g\t%g' % (hgvs, render(K, ab), xs.get(ab, 0), render(K, cb), xs.get(cb, 0), render(K, cd), xs.get(cd, 0), dd, m, w)
