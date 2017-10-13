@@ -199,7 +199,9 @@ def main(argv):
                         continue
 
                 pa = pp[0]
+                pb = pp[1]
                 pc = pp[2]
+                pd = pp[3]
 
                 cab = xs.get(ab, 0)
                 ccb = xs.get(cb, 0)
@@ -209,7 +211,7 @@ def main(argv):
                 # Assume the true std dev is 10% of the mean
                 w = ccb / m
 
-                hgvs = '%s:c.%d_%ddup' % (names[n], pa, pc - 1)
+                hgvs = '%s:c.%d_%ddup' % (names[n], pb, pd - 1)
                 print '%s\t%s\t%d\t%s\t%d\t%s\t%d\t%d\t%g\t%g' % (hgvs, render(K, ab), xs.get(ab, 0), render(K, cb), xs.get(cb, 0), render(K, cd), xs.get(cd, 0), dd, m, w)
 
 if __name__ == '__main__':
