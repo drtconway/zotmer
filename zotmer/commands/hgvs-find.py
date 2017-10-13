@@ -51,7 +51,6 @@ from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, ksDistance2, logGammaP, 
 from zotmer.library.align import glocalAlignment, revComp
 from zotmer.library.debruijn import interpolate
 from zotmer.library.hgvs import makeHGVS, refSeq2Hg19
-from zotmer.library.files import readKmersAndCounts
 from zotmer.library.reads import reads
 
 def sqr(x):

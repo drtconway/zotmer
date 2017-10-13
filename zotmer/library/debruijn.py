@@ -106,10 +106,50 @@ class Interpolator2(object):
                 pMax = p
         return pMax
 
+    def pathBetween(self, xb, xe, lo, hi):
+        fwd = {}
+        fwd[xb] = []
+        rev = {}
+        rev[xe] = []
+
+        for i in range(hi):
+            if lo <= i and i < hi:
+                for x in set(fwd.keys()) & set(rev.keys()):
+                    yield fwd[x] + rev[x]
+
+            if (i & 1) == 0:
+                nextFwd = {}
+                for (x,p) in fwd.iteritems():
+                    pp = p + [x]
+                    for y in self.succ(x):
+                        nextFwd[y] = pp
+                fwd = nextFwd
+            else:
+                nextRev = {}
+                for (x,p) in rev.iteritems():
+                    pp = [x] + p
+                    for y in self.pred(x):
+                        nextRev[y] = pp
+                rev = nextRev
+
+    def interpolateBetween(self, xb, xe, lo, hi):
+        sMax = 0
+        pMax = None
+        for p in self.pathBetween(xb, xe, lo, hi):
+            s = 0
+            for x in p:
+                s += self.xs[x]
+            if s > sMax:
+                sMax = s
+                pMax = p
+        return pMax
+
 def interpolate(K, xs, xb, xe, n):
-    I1 = Interpolator1(K, xs)
-    p1 = I1.interpolate(xb, xe, n)
     I2 = Interpolator2(K, xs)
     p2 = I2.interpolate(xb, xe, n)
-    assert p1 == p2
-    return p1
+    return p2
+
+def interpolateBetween(K, xs, xb, xe, lo, hi):
+    I2 = Interpolator2(K, xs)
+    p2 = I2.interpolateBetween(xb, xe, lo, hi)
+    return p2
