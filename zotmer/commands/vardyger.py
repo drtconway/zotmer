@@ -20,10 +20,11 @@ import docopt
 import tqdm
 import yaml
 
-from pykmer.basics import ham, kmersList, kmersWithPosList, rc, render
+from pykmer.basics import ham, kmersList, kmersWithPosList, kmersWithPosLists, rc, render
 from pykmer.file import openFile, readFasta, readFastq
-from zotmer.library.reads import reads
 from zotmer.library.debruijn import interpolate, interpolateBetween, pathBetween
+from zotmer.library.hgvs import Duplication
+from zotmer.library.reads import reads
 
 def pairs(xs):
     N = len(xs)
@@ -31,6 +32,14 @@ def pairs(xs):
         for j in xrange(i+1, N):
             yield (xs[j], xs[i])
             yield (xs[i], xs[j])
+
+def findDupDeNovo(xFst, xLst):
+    for (c, ys) in xFst.iteritems():
+        for (b, d) in pairs(ys):
+            for a in xLst[b]:
+                if a == c:
+                    continue
+                yield (a, b, c, d)
 
 def findDup(refFst, refLst, xFst, xLst):
     for (c, ys) in xFst.iteritems():
@@ -49,6 +58,19 @@ def findDup(refFst, refLst, xFst, xLst):
                     continue
                 yield (a, b, c, d)
 
+def nearest(m, xs, y):
+    dMin = m
+    posMin = []
+    for (x,p) in xs.iteritems():
+        d = ham(x, y)
+        if d > dMin:
+            continue
+        if d < dMin:
+            dMin = d
+            posMin = []
+        posMin += p
+    return posMin
+
 def offset(xs, ys, d):
     for x in xs:
         for y in ys:
@@ -56,11 +78,12 @@ def offset(xs, ys, d):
                 yield (x,y)
 
 def positions(posIdx, J, a, b, c, d):
-    pas = posIdx.get(a, [])
-    pbs = posIdx.get(b, [])
+    D = 2
+    pas = nearest(D, posIdx, a)
+    pbs = nearest(D, posIdx, b)
     pabs = list(offset(pas, pbs, J))
-    pcs = posIdx.get(c, [])
-    pds = posIdx.get(d, [])
+    pcs = nearest(D, posIdx, c)
+    pds = nearest(D, posIdx, d)
     pcds = list(offset(pcs, pds, J))
 
     res = None
@@ -71,6 +94,42 @@ def positions(posIdx, J, a, b, c, d):
             if res is None:
                 res = []
             res.append((pa, pb, pc, pd))
+    return res
+
+def locate(K, idx, seq):
+    hits = {}
+    (xs, ys) = kmersWithPosLists(K, seq)
+    for (zs, s) in [(xs, True), (ys, False)]:
+        for (x,p) in zs:
+            if x not in idx:
+                continue
+            p -= 1
+            for q in idx[x]:
+                qp = (q - p, s)
+                if qp not in hits:
+                    hits[qp] = 0
+                hits[qp] += 1
+
+    cand = None
+    for ((p,s),c) in hits.items():
+        if cand is None:
+            cand = (c, [(p, s)])
+        elif c > cand[0]:
+            cand = (c, [(p, s)])
+        elif c == cand[0]:
+            cand[1].append((p, s))
+
+    if cand is None:
+        return []
+
+    res = []
+    (c, pss) = cand
+    for (p0, s) in pss:
+        if s:
+            zs = [(x, p0 + p - 1) for (x,p) in xs]
+        else:
+            zs = [(y, p0 + p - 1) for (y,p) in ys]
+        res += zs
     return res
 
 def renderPath(K, xs):
@@ -102,16 +161,17 @@ def main(argv):
     Mj = (1 << (2*J)) - 1
 
     names = []
-    seqs = []
+    seqs = {}
     bait = {}
     wtFst = []
     wtLst = []
     posIdx = []
+    rds = []
     with openFile(opts['<sequences>']) as f:
         for (nm, seq) in readFasta(f):
             n = len(names)
             names.append(nm)
-            seqs.append(seq)
+            seqs[nm] = seq
             wf = {}
             wl = {}
             for x in kmersList(K, seq, False):
@@ -141,11 +201,17 @@ def main(argv):
                 px[x].append(p)
             posIdx.append(px)
 
+            rds.append([])
+
     N = len(names)
 
+    L = None
     X = [{} for n in range(N)]
-    for itm in reads(opts['<input>'], K=K, reads=False, kmers=True, both=True, verbose=verbose):
-        xs = itm[0][0]
+    for itm in reads(opts['<input>'], K=K, reads=True, kmers=True, both=True, verbose=verbose):
+        rd = itm[0][0]
+        L = len(rd)
+
+        xs = itm[1][0][0]
         hits = set([])
         for x in xs:
             if x in bait:
@@ -155,6 +221,7 @@ def main(argv):
                 if x not in X[n]:
                     X[n][x] = 0
                 X[n][x] += 1
+            rds[n].append(rd)
 
     for n in range(N):
         xs = X[n]
@@ -175,7 +242,9 @@ def main(argv):
                 lst[y1] = []
             lst[y1].append(y0)
 
-        for (a, b, c, d) in findDup(wtFst[n], wtLst[n], fst, lst):
+        for (a, b, c, d) in findDupDeNovo(fst, lst):
+            #print [render(J, w) for w in [a, b, c, d]]
+            #continue
             pps = positions(posIdx[n], J, a, b, c, d)
             if pps is None:
                 continue
@@ -212,6 +281,29 @@ def main(argv):
                 w = ccb / m
 
                 hgvs = '%s:c.%d_%ddup' % (names[n], pb, pd - 1)
+
+                v = Duplication(names[n], pb, pd-1)
+                v.setSequenceFactory(seqs)
+
+                ctx = v.context(2*L)
+
+                idx = {}
+                for (x,p) in kmersWithPosList(K, ctx[1], False):
+                    if x not in idx:
+                        idx[x] = []
+                    idx[x].append(p)
+                res = {}
+                for fq in rds[n]:
+                    for (x,p) in locate(K, idx, fq[1]):
+                        if p not in res:
+                            res[p] = {}
+                        if x not in res[p]:
+                            res[p][x] = 0
+                        res[p][x] += 1
+
+                for (p,ys) in sorted(res.items()):
+                    for (y,c) in sorted(ys.items()):
+                        print '%d\t%s\t%d' % (p, render(K, y), c)
                 print '%s\t%s\t%d\t%s\t%d\t%s\t%d\t%d\t%g\t%g' % (hgvs, render(K, ab), xs.get(ab, 0), render(K, cb), xs.get(cb, 0), render(K, cd), xs.get(cd, 0), dd, m, w)
 
 if __name__ == '__main__':

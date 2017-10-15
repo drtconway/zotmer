@@ -1,7 +1,68 @@
 import re
 
+import pytest
+
 from zotmer.library.rope import rope
 from zotmer.library.align import revComp
+
+# For testing NM_004119.2
+#
+_flt3 = \
+"ACCTGCAGCGCGAGGCGCGCCGCTCCAGGCGGCATCGCAGGGCTGGGCCGGCGCGGCCTGGGGACCCCGG" + \
+"GCTCCGGAGGCCATGCCGGCGTTGGCGCGCGACGGCGGCCAGCTGCCGCTGCTCGTTGTTTTTTCTGCAA" + \
+"TGATATTTGGGACTATTACAAATCAAGATCTGCCTGTGATCAAGTGTGTTTTAATCAATCATAAGAACAA" + \
+"TGATTCATCAGTGGGGAAGTCATCATCATATCCCATGGTATCAGAATCCCCGGAAGACCTCGGGTGTGCG" + \
+"TTGAGACCCCAGAGCTCAGGGACAGTGTACGAAGCTGCCGCTGTGGAAGTGGATGTATCTGCTTCCATCA" + \
+"CACTGCAAGTGCTGGTCGACGCCCCAGGGAACATTTCCTGTCTCTGGGTCTTTAAGCACAGCTCCCTGAA" + \
+"TTGCCAGCCACATTTTGATTTACAAAACAGAGGAGTTGTTTCCATGGTCATTTTGAAAATGACAGAAACC" + \
+"CAAGCTGGAGAATACCTACTTTTTATTCAGAGTGAAGCTACCAATTACACAATATTGTTTACAGTGAGTA" + \
+"TAAGAAATACCCTGCTTTACACATTAAGAAGACCTTACTTTAGAAAAATGGAAAACCAGGACGCCCTGGT" + \
+"CTGCATATCTGAGAGCGTTCCAGAGCCGATCGTGGAATGGGTGCTTTGCGATTCACAGGGGGAAAGCTGT" + \
+"AAAGAAGAAAGTCCAGCTGTTGTTAAAAAGGAGGAAAAAGTGCTTCATGAATTATTTGGGACGGACATAA" + \
+"GGTGCTGTGCCAGAAATGAACTGGGCAGGGAATGCACCAGGCTGTTCACAATAGATCTAAATCAAACTCC" + \
+"TCAGACCACATTGCCACAATTATTTCTTAAAGTAGGGGAACCCTTATGGATAAGGTGCAAAGCTGTTCAT" + \
+"GTGAACCATGGATTCGGGCTCACCTGGGAATTAGAAAACAAAGCACTCGAGGAGGGCAACTACTTTGAGA" + \
+"TGAGTACCTATTCAACAAACAGAACTATGATACGGATTCTGTTTGCTTTTGTATCATCAGTGGCAAGAAA" + \
+"CGACACCGGATACTACACTTGTTCCTCTTCAAAGCATCCCAGTCAATCAGCTTTGGTTACCATCGTAGAA" + \
+"AAGGGATTTATAAATGCTACCAATTCAAGTGAAGATTATGAAATTGACCAATATGAAGAGTTTTGTTTTT" + \
+"CTGTCAGGTTTAAAGCCTACCCACAAATCAGATGTACGTGGACCTTCTCTCGAAAATCATTTCCTTGTGA" + \
+"GCAAAAGGGTCTTGATAACGGATACAGCATATCCAAGTTTTGCAATCATAAGCACCAGCCAGGAGAATAT" + \
+"ATATTCCATGCAGAAAATGATGATGCCCAATTTACCAAAATGTTCACGCTGAATATAAGAAGGAAACCTC" + \
+"AAGTGCTCGCAGAAGCATCGGCAAGTCAGGCGTCCTGTTTCTCGGATGGATACCCATTACCATCTTGGAC" + \
+"CTGGAAGAAGTGTTCAGACAAGTCTCCCAACTGCACAGAAGAGATCACAGAAGGAGTCTGGAATAGAAAG" + \
+"GCTAACAGAAAAGTGTTTGGACAGTGGGTGTCGAGCAGTACTCTAAACATGAGTGAAGCCATAAAAGGGT" + \
+"TCCTGGTCAAGTGCTGTGCATACAATTCCCTTGGCACATCTTGTGAGACGATCCTTTTAAACTCTCCAGG" + \
+"CCCCTTCCCTTTCATCCAAGACAACATCTCATTCTATGCAACAATTGGTGTTTGTCTCCTCTTCATTGTC" + \
+"GTTTTAACCCTGCTAATTTGTCACAAGTACAAAAAGCAATTTAGGTATGAAAGCCAGCTACAGATGGTAC" + \
+"AGGTGACCGGCTCCTCAGATAATGAGTACTTCTACGTTGATTTCAGAGAATATGAATATGATCTCAAATG" + \
+"GGAGTTTCCAAGAGAAAATTTAGAGTTTGGGAAGGTACTAGGATCAGGTGCTTTTGGAAAAGTGATGAAC" + \
+"GCAACAGCTTATGGAATTAGCAAAACAGGAGTCTCAATCCAGGTTGCCGTCAAAATGCTGAAAGAAAAAG" + \
+"CAGACAGCTCTGAAAGAGAGGCACTCATGTCAGAACTCAAGATGATGACCCAGCTGGGAAGCCACGAGAA" + \
+"TATTGTGAACCTGCTGGGGGCGTGCACACTGTCAGGACCAATTTACTTGATTTTTGAATACTGTTGCTAT" + \
+"GGTGATCTTCTCAACTATCTAAGAAGTAAAAGAGAAAAATTTCACAGGACTTGGACAGAGATTTTCAAGG" + \
+"AACACAATTTCAGTTTTTACCCCACTTTCCAATCACATCCAAATTCCAGCATGCCTGGTTCAAGAGAAGT" + \
+"TCAGATACACCCGGACTCGGATCAAATCTCAGGGCTTCATGGGAATTCATTTCACTCTGAAGATGAAATT" + \
+"GAATATGAAAACCAAAAAAGGCTGGAAGAAGAGGAGGACTTGAATGTGCTTACATTTGAAGATCTTCTTT" + \
+"GCTTTGCATATCAAGTTGCCAAAGGAATGGAATTTCTGGAATTTAAGTCGTGTGTTCACAGAGACCTGGC" + \
+"CGCCAGGAACGTGCTTGTCACCCACGGGAAAGTGGTGAAGATATGTGACTTTGGATTGGCTCGAGATATC" + \
+"ATGAGTGATTCCAACTATGTTGTCAGGGGCAATGCCCGTCTGCCTGTAAAATGGATGGCCCCCGAAAGCC" + \
+"TGTTTGAAGGCATCTACACCATTAAGAGTGATGTCTGGTCATATGGAATATTACTGTGGGAAATCTTCTC" + \
+"ACTTGGTGTGAATCCTTACCCTGGCATTCCGGTTGATGCTAACTTCTACAAACTGATTCAAAATGGATTT" + \
+"AAAATGGATCAGCCATTTTATGCTACAGAAGAAATATACATTATAATGCAATCCTGCTGGGCTTTTGACT" + \
+"CAAGGAAACGGCCATCCTTCCCTAATTTGACTTCGTTTTTAGGATGTCAGCTGGCAGATGCAGAAGAAGC" + \
+"GATGTATCAGAATGTGGATGGCCGTGTTTCGGAATGTCCTCACACCTACCAAAACAGGCGACCTTTCAGC" + \
+"AGAGAGATGGATTTGGGGCTACTCTCTCCGCAGGCTCAGGTCGAAGATTCGTAGAGGAACAATTTAGTTT" + \
+"TAAGGACTTCATCCCTCCACCTATCCCTAACAGGCTGTAGATTACCAAAACAAGATTAATTTCATCACTA" + \
+"AAAGAAAATCTATTATCAACTGCTGCTTCACCAGACTTTTCTCTAGAAGCTGTCTGCGTTTACTCTTGTT" + \
+"TTCAAAGGGACTTTTGTAAAATCAAATCATCCTGTCACAAGGCAGGAGGAGCTGATAATGAACTTTATTG" + \
+"GAGCATTGATCTGCATCCAAGGCCTTCTCAGGCTGGCTTGAGTGAATTGTGTACCTGAAGTACAGTATAT" + \
+"TCTTGTAAATACATAAAACAAAAGCATTTTGCTAAGGAGAAGCTAATATGATTTTTTAAGTCTATGTTTT" + \
+"AAAATAATATGTAAATTTTTCAGCTATTTAGTGATATATTTTATGGGTGGGAATAAAATTTCTACTACAG" + \
+"AATTGCCCATTATTGAATTATTTACATGGTATAATTAGGGCAAGTCTTAACTGGAGTTCACGAACCCCCT" + \
+"GAAATTGTGCACCCATAGCCACCTACACATTCCTTCCAGAGCACGTGTGCTTTTACCCCAAGATACAAGG" + \
+"AATGTGTAGGCAGCTATGGTTGTCACAGCCTAAGATTTCTGCAACAACAGGGGTTGTATTGGGGGAAGTT" + \
+"TATAATGAATAGGTGTTCTACCATAAAGAGTAATACATCACCTAGACACTTTGGCGGCCTTCCCAGACTC" + \
+"AGGGCCAGTCAGAAGTAACATGGAGGATTAGTATTTTCAATAAAGTTACTCTTGTCCCCACAAAAAAA"
 
 hg19Data = [("chr1",   "CM000663.1",  "NC_000001.10"),
             ("chr2",   "CM000664.1",  "NC_000002.11"),
@@ -32,9 +93,25 @@ refSeq2Hg19 = dict([(r, h) for (h, g, r) in hg19Data])
 hg19ToRefSeq= dict([(h, r) for (h, g, r) in hg19Data])
 
 class HGVS(object):
-    def __init__(self, acc):
+    """
+    An HGVS object describes a variation.
+
+    Unlike the textual notation used in the specification,
+    internally positions are 0 based not 1 based.
+
+    Each variant may be described in terms of a section of
+    sequence that is removed from the reference - an interval
+    returned by the method range(); and a section of sequence
+    that replaces it - the actual nucleotides are returned by
+    the method sequence() and the method size() returns the
+    length of the inserted sequence.
+
+    This representation is used to map the high level notion
+    of the variant to the rope representation used underneath.
+    """
+    def __init__(self, acc, seqFac):
         self.acc = acc
-        self.seqFac = None
+        self.seqFac = seqFac
 
     def accession(self):
         return self.acc
@@ -51,8 +128,6 @@ class HGVS(object):
 
     def apply(self, s):
         (p,q) = self.range()
-        p -= 1
-        q -= 1
         v = self.sequence()
         a = rope.substr(s, 0, p)
         b = rope.substr(s, q, len(s))
@@ -64,7 +139,6 @@ class HGVS(object):
 
     def context(self, w):
         wt = self.range()
-        wt = (wt[0] - 1, wt[1] - 1) # convert to zero offset
         n = self.size()
         d = wt[0] - wt[1] + n
         mut = (wt[0], wt[1] + d)
@@ -86,8 +160,8 @@ class HGVS(object):
         return (wtSeq, mutSeq)
 
 class Substitution(HGVS):
-    def __init__(self, acc, pos, ref, var):
-        super(Substitution, self).__init__(acc)
+    def __init__(self, acc, pos, ref, var, sf = None):
+        super(Substitution, self).__init__(acc, sf)
         self.pos = pos
         self.ref = ref
         self.var = var
@@ -102,11 +176,28 @@ class Substitution(HGVS):
         return self.var
 
     def __str__(self):
-        return '%s:g.%d%s>%s' % (self.acc, self.pos, self.ref, self.var)
+        return '%s:g.%d%s>%s' % (self.acc, self.pos+1, self.ref, self.var)
+
+def test_substitution0():
+    sf = {'NM_004119.2': _flt3}
+    assert _flt3[49] == 'G'
+    v = Substitution('NM_004119.2', 49, 'G', 'T', sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGCTGGGCCTGCGCGGCCT'
+
+def test_substitution1():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.50G>T'
+    v = makeHGVS(h, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGCTGGGCCTGCGCGGCCT'
+    assert str(v) == h
 
 class Deletion(HGVS):
-    def __init__(self, acc, fst, lst):
-        super(Deletion, self).__init__(acc)
+    def __init__(self, acc, fst, lst, sf = None):
+        super(Deletion, self).__init__(acc, sf)
         self.fst = fst
         self.lst = lst
 
@@ -121,33 +212,64 @@ class Deletion(HGVS):
 
     def __str__(self):
         if self.fst == self.lst:
-            return '%s:g.%ddel' % (self.acc, self.fst)
-        return '%s:g.%d_%ddel' % (self.acc, self.fst, self.lst)
+            return '%s:g.%ddel' % (self.acc, self.fst+1)
+        return '%s:g.%d_%ddel' % (self.acc, self.fst+1, self.lst+1)
+
+def test_deletion0():
+    sf = {'NM_004119.2': _flt3}
+    assert _flt3[49] == 'G'
+    v = Deletion('NM_004119.2', 47, 51, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'AGGGCTGGGCCGGCGCGGCCTGG'
+    assert ctx[1] == 'AGGGCTGGGGCGGCCTGG'
+
+def test_deletion1():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.48_52del'
+    v = makeHGVS(h, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'AGGGCTGGGCCGGCGCGGCCTGG'
+    assert ctx[1] == 'AGGGCTGGGGCGGCCTGG'
+    assert str(v) == h
 
 class Insertion(HGVS):
-    def __init__(self, acc, aft, bef, seq):
-        super(Insertion, self).__init__(acc)
-        self.aft = aft
-        assert self.aft + 1 == bef
+    def __init__(self, acc, bef, seq, sf = None):
+        super(Insertion, self).__init__(acc, sf)
+        self.bef = bef
         self.seq = seq
 
     def size(self):
         return len(self.seq)
 
     def range(self):
-        return (self.aft, self.aft)
+        return (self.bef, self.bef)
 
     def sequence(self):
         return self.seq
 
     def __str__(self):
-        return '%s:g.%d_%dins%s' % (self.acc, self.aft, self.aft+1, self.seq)
+        return '%s:g.%d_%dins%s' % (self.acc, self.bef, self.bef+1, self.seq)
+
+def test_insertion0():
+    sf = {'NM_004119.2': _flt3}
+    v = Insertion('NM_004119.2', 49, 'TTATT', sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGCTGGGCCGGCGCGGCC'
+    assert ctx[1] == 'GGCTGGGCCTTATTGGCGCGGCC'
+
+def test_insertion1():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.49_50insTTATT'
+    v = makeHGVS(h, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGCTGGGCCGGCGCGGCC'
+    assert ctx[1] == 'GGCTGGGCCTTATTGGCGCGGCC'
+    assert str(v) == h
 
 class Anonymous(HGVS):
-    def __init__(self, acc, aft, bef, iln):
-        super(Anonymous, self).__init__(acc)
-        self.aft = aft
-        assert self.aft + 1 == bef
+    def __init__(self, acc, bef, iln, sf = None):
+        super(Anonymous, self).__init__(acc, sf)
+        self.bef = bef
         self.iln = iln
         self.seq = None
 
@@ -162,7 +284,7 @@ class Anonymous(HGVS):
         return self.iln
 
     def range(self):
-        return (self.aft, self.aft)
+        return (self.bef, self.bef)
 
     def sequence(self):
         if self.seq is not None:
@@ -170,11 +292,36 @@ class Anonymous(HGVS):
         return self.iln * 'N'
 
     def __str__(self):
-        return '%s:g.%d_%dins%d' % (self.acc, self.aft, self.aft+1, self.iln)
+        return '%s:g.%d_%dins%d' % (self.acc, self.bef, self.bef+1, self.iln)
+
+def test_anonymous0():
+    sf = {'NM_004119.2': _flt3}
+    v = Anonymous('NM_004119.2', 49, 5, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGCTGGGCCGGCGCGGCC'
+    assert ctx[1] == 'GGCTGGGCCNNNNNGGCGCGGCC'
+
+def test_anonymous1():
+    sf = {'NM_004119.2': _flt3}
+    v = Anonymous('NM_004119.2', 49, 5, sf)
+    v.setSequence('TTATT')
+    ctx = v.context(10)
+    assert ctx[0] == 'GGCTGGGCCGGCGCGGCC'
+    assert ctx[1] == 'GGCTGGGCCTTATTGGCGCGGCC'
+
+def test_anonymous2():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.49_50ins5'
+    v = makeHGVS(h, sf)
+    v.setSequence('TTATT')
+    ctx = v.context(10)
+    assert ctx[0] == 'GGCTGGGCCGGCGCGGCC'
+    assert ctx[1] == 'GGCTGGGCCTTATTGGCGCGGCC'
+    assert str(v) == h
 
 class DeletionInsertion(HGVS):
-    def __init__(self, acc, fst, lst, seq):
-        super(DeletionInsertion, self).__init__(acc)
+    def __init__(self, acc, fst, lst, seq, sf = None):
+        super(DeletionInsertion, self).__init__(acc, sf)
         self.fst = fst
         self.lst = lst
         self.seq = seq
@@ -190,12 +337,28 @@ class DeletionInsertion(HGVS):
 
     def __str__(self):
         if self.fst == self.lst:
-            return '%s:g.%ddelins%s' % (self.acc, self.fst, self.seq)
-        return '%s:g.%d_%ddelins%s' % (self.acc, self.fst, self.lst, self.seq)
+            return '%s:g.%ddelins%s' % (self.acc, self.fst+1, self.seq)
+        return '%s:g.%d_%ddelins%s' % (self.acc, self.fst+1, self.lst+1, self.seq)
+
+def test_delins0():
+    sf = {'NM_004119.2': _flt3}
+    v = DeletionInsertion('NM_004119.2', 48, 49, 'TTATT', sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCTTATTGCGCGGCCT'
+
+def test_delins1():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.49_50delinsTTATT'
+    v = makeHGVS(h, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCTTATTGCGCGGCCT'
+    assert str(v) == h
 
 class AnonymousDelIns(HGVS):
-    def __init__(self, acc, fst, lst, iln):
-        super(AnonymousDelIns, self).__init__(acc)
+    def __init__(self, acc, fst, lst, iln, sf = None):
+        super(AnonymousDelIns, self).__init__(acc, sf)
         self.fst = fst
         self.lst = lst
         self.iln = iln
@@ -221,12 +384,37 @@ class AnonymousDelIns(HGVS):
 
     def __str__(self):
         if self.fst == self.lst:
-            return '%s:g.%ddelins%d' % (self.acc, self.fst, self.iln)
-        return '%s:g.%d_%ddelins%d' % (self.acc, self.fst, self.lst, self.iln)
+            return '%s:g.%ddelins%d' % (self.acc, self.fst+1, self.iln)
+        return '%s:g.%d_%ddelins%d' % (self.acc, self.fst+1, self.lst+1, self.iln)
+
+def test_anondelins0():
+    sf = {'NM_004119.2': _flt3}
+    v = AnonymousDelIns('NM_004119.2', 48, 49, 5, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCNNNNNGCGCGGCCT'
+
+def test_anondelins1():
+    sf = {'NM_004119.2': _flt3}
+    v = AnonymousDelIns('NM_004119.2', 48, 49, 5, sf)
+    v.setSequence('TTATT')
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCTTATTGCGCGGCCT'
+
+def test_anondelins2():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.49_50delins5'
+    v = makeHGVS(h, sf)
+    v.setSequence('TTATT')
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCTTATTGCGCGGCCT'
+    assert str(v) == h
 
 class Repeat(HGVS):
-    def __init__(self, acc, fst, lst, cnt):
-        super(Repeat, self).__init__(acc)
+    def __init__(self, acc, fst, lst, cnt, sf = None):
+        super(Repeat, self).__init__(acc, sf)
         self.fst = fst
         self.lst = lst
         self.cnt = cnt
@@ -241,17 +429,33 @@ class Repeat(HGVS):
     def sequence(self):
         if not self.seq:
             big = self.loadAccession()
-            self.seq = big[self.fst-1:self.lst]
+            self.seq = big[self.fst:self.lst+1].upper()
         return self.cnt * self.seq
 
     def __str__(self):
         if self.fst == self.lst:
-            return '%s:g.%d[%d]' % (self.acc, self.fst, self.cnt)
-        return '%s:g.%d_%d[%d]' % (self.acc, self.fst, self.lst, self.cnt)
+            return '%s:g.%d[%d]' % (self.acc, self.fst+1, self.cnt)
+        return '%s:g.%d_%d[%d]' % (self.acc, self.fst+1, self.lst+1, self.cnt)
+
+def test_repeat0():
+    sf = {'NM_004119.2': _flt3}
+    v = Repeat('NM_004119.2', 48, 49, 5, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCCGCGCGCGCGGCGCGGCCT'
+
+def test_repeat1():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.49_50[5]'
+    v = makeHGVS(h, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCCGCGCGCGCGGCGCGGCCT'
+    assert str(v) == h
 
 class Duplication(HGVS):
-    def __init__(self, acc, fst, lst):
-        super(Duplication, self).__init__(acc)
+    def __init__(self, acc, fst, lst, sf = None):
+        super(Duplication, self).__init__(acc, sf)
         self.fst = fst
         self.lst = lst
         self.seq = None
@@ -265,17 +469,33 @@ class Duplication(HGVS):
     def sequence(self):
         if not self.seq:
             big = self.loadAccession()
-            self.seq = big[self.fst-1:self.lst]
+            self.seq = big[self.fst:self.lst+1].upper()
         return 2*self.seq
 
     def __str__(self):
         if self.fst == self.lst:
-            return '%s:g.%ddup' % (self.acc, self.fst)
-        return '%s:g.%d_%ddup' % (self.acc, self.fst, self.lst)
+            return '%s:g.%ddup' % (self.acc, self.fst+1)
+        return '%s:g.%d_%ddup' % (self.acc, self.fst+1, self.lst+1)
+
+def test_duplication0():
+    sf = {'NM_004119.2': _flt3}
+    v = Duplication('NM_004119.2', 48, 49, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCCGCGGCGCGGCCT'
+
+def test_duplication1():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.49_50dup'
+    v = makeHGVS(h, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GGGCTGGGCCGGCGCGGCCT'
+    assert ctx[1] == 'GGGCTGGGCCGCGGCGCGGCCT'
+    assert str(v) == h
 
 class Inversion(HGVS):
-    def __init__(self, acc, fst, lst):
-        super(Inversion, self).__init__(acc)
+    def __init__(self, acc, fst, lst, sf = None):
+        super(Inversion, self).__init__(acc, sf)
         self.fst = fst
         self.lst = lst
         self.seq = None
@@ -289,11 +509,27 @@ class Inversion(HGVS):
     def sequence(self):
         if not self.seq:
             big = self.loadAccession()
-            self.seq = revComp(big[self.fst-1:self.lst].upper())
+            self.seq = revComp(big[self.fst:self.lst+1].upper())
         return self.seq
 
     def __str__(self):
-        return '%s:g.%d_%dinv' % (self.acc, self.fst, self.lst)
+        return '%s:g.%d_%dinv' % (self.acc, self.fst+1, self.lst+1)
+
+def test_inversion0():
+    sf = {'NM_004119.2': _flt3}
+    v = Inversion('NM_004119.2', 50, 61, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GCTGGGCCGGCGCGGCCTGGGGACCCCGGG'
+    assert ctx[1] == 'GCTGGGCCGCCCAGGCCGCGCGACCCCGGG'
+
+def test_inversion1():
+    sf = {'NM_004119.2': _flt3}
+    h = 'NM_004119.2:g.51_62inv'
+    v = makeHGVS(h, sf)
+    ctx = v.context(10)
+    assert ctx[0] == 'GCTGGGCCGGCGCGGCCTGGGGACCCCGGG'
+    assert ctx[1] == 'GCTGGGCCGCCCAGGCCGCGCGACCCCGGG'
+    assert str(v) == h
 
 gvarPfx = re.compile('([^:]+):g\.(.*)$')
 gvarPos = re.compile('([0-9]+)(_([0-9]+))?(.*)$')
@@ -307,7 +543,7 @@ gvarDIn = re.compile('delins([ACGT]+)$')
 gvarAnD = re.compile('delins([0-9]+)$')
 gvarRpt = re.compile('([ACGT]+)?\[([0-9]+)\]$')
 
-def makeHGVS(txt):
+def makeHGVS(txt, sf = None):
     s = txt
     mpfx = gvarPfx.match(s)
     if mpfx is None:
@@ -330,7 +566,7 @@ def makeHGVS(txt):
         ss = m.groups()
         ref = ss[0]
         alt = ss[1]
-        return Substitution(acc, pos0, ref, alt)
+        return Substitution(acc, pos0-1, ref, alt, sf)
 
     m = gvarDel.match(s)
     if m:
@@ -338,7 +574,7 @@ def makeHGVS(txt):
             pos1 = pos0
         else:
             pos1 = int(pos1)
-        return Deletion(acc, pos0, pos1)
+        return Deletion(acc, pos0-1, pos1-1, sf)
 
     m = gvarDup.match(s)
     if m:
@@ -346,7 +582,7 @@ def makeHGVS(txt):
             pos1 = pos0
         else:
             pos1 = int(pos1)
-        return Duplication(acc, pos0, pos1)
+        return Duplication(acc, pos0-1, pos1-1, sf)
 
     m = gvarIns.match(s)
     if m:
@@ -354,7 +590,7 @@ def makeHGVS(txt):
             return None
         pos1 = int(pos1)
         ss = m.groups()
-        return Insertion(acc, pos0, pos1, ss[0])
+        return Insertion(acc, pos1-1, ss[0], sf)
 
     m = gvarAnI.match(s)
     if m:
@@ -363,14 +599,14 @@ def makeHGVS(txt):
         pos1 = int(pos1)
         ss = m.groups()
         l = int(ss[0])
-        return Anonymous(acc, pos0, pos1, l)
+        return Anonymous(acc, pos1-1, l, sf)
 
     m = gvarInv.match(s)
     if m:
         if pos1 is None:
             return None
         pos1 = int(pos1)
-        return Inversion(acc, pos0, pos1)
+        return Inversion(acc, pos0-1, pos1-1, sf)
 
     m = gvarDIn.match(s)
     if m:
@@ -379,7 +615,7 @@ def makeHGVS(txt):
         else:
             pos1 = int(pos1)
         ss = m.groups()
-        return DeletionInsertion(acc, pos0, pos1, ss[0])
+        return DeletionInsertion(acc, pos0-1, pos1-1, ss[0], sf)
 
     m = gvarAnD.match(s)
     if m:
@@ -389,7 +625,7 @@ def makeHGVS(txt):
             pos1 = int(pos1)
         ss = m.groups()
         l = int(ss[0])
-        return AnonymousDelIns(acc, pos0, pos1, l)
+        return AnonymousDelIns(acc, pos0-1, pos1-1, l, sf)
 
     m = gvarRpt.match(s)
     if m:
@@ -401,7 +637,7 @@ def makeHGVS(txt):
         else:
             pos1 = int(pos1)
         cnt = int(ss[1])
-        return Repeat(acc, pos0, pos1, cnt)
+        return Repeat(acc, pos0-1, pos1-1, cnt, sf)
 
     return None
 
