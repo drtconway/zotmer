@@ -25,36 +25,35 @@ from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.debruijn import interpolate, interpolateBetween, pathBetween
 from zotmer.library.hgvs import Duplication
 from zotmer.library.reads import reads
+from zotmer.library.align import revComp
 
-def pairs(xs):
+def pairs(xs, ys):
     N = len(xs)
+    M = len(ys)
     for i in xrange(N):
-        for j in xrange(i+1, N):
-            yield (xs[j], xs[i])
-            yield (xs[i], xs[j])
+        for j in xrange(M):
+            if xs[i] != ys[j]:
+                yield (xs[i], ys[j])
 
 def findDupDeNovo(xFst, xLst):
     for (c, ys) in xFst.iteritems():
-        for (b, d) in pairs(ys):
+        for (b, d) in pairs(ys, ys):
             for a in xLst[b]:
                 if a == c:
                     continue
                 yield (a, b, c, d)
 
 def findDup(refFst, refLst, xFst, xLst):
-    for (c, ys) in xFst.iteritems():
-        if c not in refFst:
-            continue
-        ds = refFst[c]
-        for (b, d) in pairs(ys):
-            if d not in ds:
-                continue
-            if b not in refLst:
-                continue
+    cs = set(xFst.keys()) & set(refFst.keys())
+    Ws = set(refLst.keys())
+    for c in cs:
+        ys = xFst[c]
+        Ys = set(ys)
+        ds = sorted(Ys & set(refFst[c]))
+        bs = sorted(Ys & Ws)
+        for (b, d) in pairs(bs, ds):
             for a in refLst[b]:
                 if a == c:
-                    continue
-                if a not in refFst:
                     continue
                 yield (a, b, c, d)
 
@@ -78,7 +77,7 @@ def offset(xs, ys, d):
                 yield (x,y)
 
 def positions(posIdx, J, a, b, c, d):
-    D = 2
+    D = 1
     pas = nearest(D, posIdx, a)
     pbs = nearest(D, posIdx, b)
     pabs = list(offset(pas, pbs, J))
@@ -89,6 +88,7 @@ def positions(posIdx, J, a, b, c, d):
     res = None
     for (pa, pb) in pabs:
         for (pc, pd) in pcds:
+            #print (pa, pb, pc, pd)
             if pc <= pb:
                 continue
             if res is None:
@@ -131,6 +131,87 @@ def locate(K, idx, seq):
             zs = [(y, p0 + p - 1) for (y,p) in ys]
         res += zs
     return res
+
+def remapReads(K, L, rds, v):
+    ctx = v.context(2*L)
+    idx = {}
+    for (x,p) in kmersWithPosList(K, ctx[1], False):
+        if x not in idx:
+            idx[x] = []
+        idx[x].append(p)
+
+    res = {}
+    for fq in rds:
+        for (x,p) in locate(K, idx, fq[1]):
+            if p not in res:
+                res[p] = {}
+            if x not in res[p]:
+                res[p][x] = 0
+            res[p][x] += 1
+
+    for (p,ys) in sorted(res.items()):
+        for (y,c) in sorted(ys.items()):
+            print '%d\t%s\t%d' % (p, render(K, y), c)
+
+def showAnchoredReads(K, anks, rds):
+    A = set(anks.keys())
+
+    res = {}
+    for rd in rds:
+        (xs, ys) = kmersWithPosLists(K, rd[1])
+
+        fwd = set([])
+        for (x,p) in xs:
+            if x in A:
+                fwd.add((x,p))
+
+        rev = set([])
+        for (y,p) in ys:
+            if y in A:
+                rev.add((y,p))
+
+        if len(fwd) > 0:
+            p0 = min([p for (x,p) in fwd])
+            fwd = frozenset([(x,p-p0) for (x,p) in fwd])
+            seq = rd[1]
+            if fwd not in res:
+                res[fwd] = {}
+            k = (p0,seq)
+            if k not in res[fwd]:
+                res[fwd][k] = 0
+            res[fwd][k] += 1
+
+        if len(rev) > 0:
+            p0 = min([p for (y,p) in rev])
+            rev = frozenset([(y,p-p0) for (y,p) in rev])
+            seq = revComp(rd[1])
+            if rev not in res:
+                res[rev] = {}
+            k = (p0,seq)
+            if k not in res[rev]:
+                res[rev][k] = 0
+            res[rev][k] += 1
+
+    for s in sorted(res.keys()):
+        q = max([p for (p,seq) in res[s].keys()])
+        lab = ','.join(sorted([anks[x] for (x,p) in s]))
+        hdr = [lab,'\t\t', (q-1)*' ']
+        pp = None
+        for (p,x) in sorted([(p1,x1) for (x1,p1) in s]):
+            if pp is None:
+                hdr += [render(K, x)]
+            else:
+                d = p - pp - K
+                hdr += [d*' ', render(K, x)]
+            pp = p
+        print ''.join(hdr)
+        vv = []
+        for (k,c) in sorted(res[s].items()):
+            (p0, seq) = k
+            vv.append((p0, c, seq))
+        for (p0, c, seq) in sorted(vv):
+            print '%d\t%d\t%s%s' % (p0, c, (q-p0)*' ', seq)
+        print
 
 def renderPath(K, xs):
     if len(xs) == 0:
@@ -242,8 +323,8 @@ def main(argv):
                 lst[y1] = []
             lst[y1].append(y0)
 
-        for (a, b, c, d) in findDupDeNovo(fst, lst):
-            #print [render(J, w) for w in [a, b, c, d]]
+        #for (a, b, c, d) in findDupDeNovo(fst, lst):
+        for (a, b, c, d) in findDup(wtFst[n], wtLst[n], fst, lst):
             #continue
             pps = positions(posIdx[n], J, a, b, c, d)
             if pps is None:
@@ -252,6 +333,7 @@ def main(argv):
                 ab = a << S | b
                 cb = c << S | b
                 cd = c << S | d
+                #print [(render(J, w), p) for (w,p) in zip([a, b, c, d], pps)]
 
                 dd = pp[2] - pp[0]
 
@@ -281,29 +363,11 @@ def main(argv):
                 w = ccb / m
 
                 hgvs = '%s:c.%d_%ddup' % (names[n], pb, pd - 1)
+                v = Duplication(names[n], pb, pd-1, seqs)
+                #remapReads(K, L, rds[n], v)
+                print [posIdx[n][w] for w in [a,b,c,d]]
+                showAnchoredReads(K, {ab:'AB', cb:'CB', cd:'CD'}, rds[n])
 
-                v = Duplication(names[n], pb, pd-1)
-                v.setSequenceFactory(seqs)
-
-                ctx = v.context(2*L)
-
-                idx = {}
-                for (x,p) in kmersWithPosList(K, ctx[1], False):
-                    if x not in idx:
-                        idx[x] = []
-                    idx[x].append(p)
-                res = {}
-                for fq in rds[n]:
-                    for (x,p) in locate(K, idx, fq[1]):
-                        if p not in res:
-                            res[p] = {}
-                        if x not in res[p]:
-                            res[p][x] = 0
-                        res[p][x] += 1
-
-                for (p,ys) in sorted(res.items()):
-                    for (y,c) in sorted(ys.items()):
-                        print '%d\t%s\t%d' % (p, render(K, y), c)
                 print '%s\t%s\t%d\t%s\t%d\t%s\t%d\t%d\t%g\t%g' % (hgvs, render(K, ab), xs.get(ab, 0), render(K, cb), xs.get(cb, 0), render(K, cd), xs.get(cd, 0), dd, m, w)
 
 if __name__ == '__main__':
