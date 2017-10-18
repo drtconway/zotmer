@@ -7,6 +7,7 @@ Usage:
 
 Options:
     -k K            value of K to use - must be even. [default: 24]
+    -m MIN          minimum k-mer coverage for reporting anchors [default: 10]
     -s              strict path validation
     -v              produce verbose output
 """
@@ -235,6 +236,8 @@ def main(argv):
         print >> sys.stderr, "K must be even."
         return
 
+    minCov = int(opts['-m'])
+
     verbose = opts['-v']
 
     J = K // 2
@@ -304,14 +307,16 @@ def main(argv):
                 X[n][x] += 1
             rds[n].append(rd)
 
+    hdrShown = False
+    vn = 0
     for n in range(N):
         xs = X[n]
 
         fst = {}
         lst = {}
         for (x,c) in xs.iteritems():
-            if c < 5:
-                continue
+            #if c < 5:
+            #    continue
             y0 = x >> S
             y1 = x & Mj
 
@@ -358,6 +363,13 @@ def main(argv):
                 ccb = xs.get(cb, 0)
                 ccd = xs.get(cd, 0)
 
+                if cab < minCov:
+                    continue
+                if ccb < minCov:
+                    continue
+                if ccd < minCov:
+                    continue
+
                 m = (cab + ccd) / 2.0
                 # Assume the true std dev is 10% of the mean
                 w = ccb / m
@@ -365,10 +377,39 @@ def main(argv):
                 hgvs = '%s:c.%d_%ddup' % (names[n], pb, pd - 1)
                 v = Duplication(names[n], pb, pd-1, seqs)
                 #remapReads(K, L, rds[n], v)
-                print [posIdx[n][w] for w in [a,b,c,d]]
-                showAnchoredReads(K, {ab:'AB', cb:'CB', cd:'CD'}, rds[n])
+                #print [posIdx[n][w] for w in [a,b,c,d]]
+                #showAnchoredReads(K, {ab:'AB', cb:'CB', cd:'CD'}, rds[n])
 
-                print '%s\t%s\t%d\t%s\t%d\t%s\t%d\t%d\t%g\t%g' % (hgvs, render(K, ab), xs.get(ab, 0), render(K, cb), xs.get(cb, 0), render(K, cd), xs.get(cd, 0), dd, m, w)
+                vn += 1
+
+                hdrs = ['n']
+                fmts = ['%d']
+                outs = [vn]
+
+                hdrs += ['left', 'leftCov']
+                fmts += ['%s','%d']
+                outs += [render(K, ab), cab]
+
+                hdrs += ['mid', 'midCov']
+                fmts += ['%s','%d']
+                outs += [render(K, cb), ccb]
+
+                hdrs += ['right', 'rightCov']
+                fmts += ['%s','%d']
+                outs += [render(K, cd), ccd]
+
+                hdrs += ['len']
+                fmts += ['%d']
+                outs += [dd]
+
+                hdrs += ['hgvs']
+                fmts += ['%s']
+                outs += [hgvs]
+
+                if not hdrShown:
+                    hdrShown = True
+                    print '\t'.join(hdrs)
+                print '\t'.join(fmts) % tuple(outs)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

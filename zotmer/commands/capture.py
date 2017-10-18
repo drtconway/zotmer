@@ -25,11 +25,11 @@ from zotmer.library.reads import reads
 
 class ReadCache(object):
     def __init__(self, pfx, nm, paired):
-        self.B = 1024
+        self.B = 16384
         self.nr = 0
         if paired:
-            nm1 = '%s/%s_1.fastq' % (pfx, nm)
-            nm2 = '%s/%s_2.fastq' % (pfx, nm)
+            nm1 = '%s/%s_1.fastq.gz' % (pfx, nm)
+            nm2 = '%s/%s_2.fastq.gz' % (pfx, nm)
             self.names = [nm1, nm2]
             self.buffers = [[], []]
             self.N = 2
@@ -51,7 +51,7 @@ class ReadCache(object):
         for i in range(self.N):
             if len(self.buffers[i]) == 0:
                 continue
-            with open(self.names[i], 'a') as f:
+            with openFile(self.names[i], 'a') as f:
                 for rd in self.buffers[i]:
                     print >> f, rd[0]
                     print >> f, rd[1]

@@ -67,6 +67,9 @@ class reads(object):
                 else:
                     self.currFilesInd += self.N
 
+                if self.progress is not None:
+                    self.progress.update(self.readNum & self.M)
+
                 if self.currFilesInd + (self.N-1) >= len(self.files):
                     raise StopIteration
 
