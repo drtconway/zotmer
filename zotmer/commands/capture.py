@@ -6,10 +6,12 @@ Usage:
     zot capture [options] <sequences> <input>...
 
 Options:
+    -b NUM          number of reads to buffer per bait sequence [default: 4096]
     -k K            value of K to use - must be even. [default: 24]
     -P PREFIX       prefix for output files [default: .]
     -p              treat inputs as paired reads
     -v              produce verbose output
+    -z              produce compressed output
 """
 
 import sys
@@ -24,17 +26,20 @@ from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.reads import reads
 
 class ReadCache(object):
-    def __init__(self, pfx, nm, paired):
-        self.B = 16384
+    def __init__(self, pfx, nm, paired, B, z):
+        self.B = B
         self.nr = 0
+        suff = ''
+        if z:
+            suff = '.gz'
         if paired:
-            nm1 = '%s/%s_1.fastq.gz' % (pfx, nm)
-            nm2 = '%s/%s_2.fastq.gz' % (pfx, nm)
+            nm1 = '%s/%s_1.fastq%s' % (pfx, nm, suff)
+            nm2 = '%s/%s_2.fastq%s' % (pfx, nm, suff)
             self.names = [nm1, nm2]
             self.buffers = [[], []]
             self.N = 2
         else:
-            nm = '%s/%s.fastq' % (pfx, nm)
+            nm = '%s/%s.fastq%s' % (pfx, nm, suff)
             self.names = [nm]
             self.buffers = [[]]
             self.N = 1
@@ -67,13 +72,14 @@ def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     K = int(opts['-k'])
-    if (K & 1) != 0:
-        print >> sys.stderr, "K must be even."
-        return
+
+    B = int(opts['-b'])
 
     paired = opts['-p']
 
     verbose = opts['-v']
+
+    Z = opts['-z']
 
     names = []
     seqs = []
@@ -90,7 +96,7 @@ def main(argv):
 
     N = len(names)
 
-    caches = [ReadCache(opts['-P'], names[n], paired)  for n in range(N)]
+    caches = [ReadCache(opts['-P'], names[n], paired, B, Z)  for n in range(N)]
 
     nr = 0
     nh = 0
