@@ -6,6 +6,8 @@ Usage:
     zot vardyger [options] <sequences> <input>...
 
 Options:
+    -A              show anchors in reads
+    -a              report all detected duplications, not just in-frame ones.
     -k K            value of K to use - must be even. [default: 24]
     -m MIN          minimum k-mer coverage for reporting anchors [default: 10]
     -s              strict path validation
@@ -342,6 +344,9 @@ def main(argv):
 
                 dd = pp[2] - pp[0]
 
+                if not opts['-a'] and dd % 3 != 0:
+                    continue
+
                 if opts['-s']:
                     fstPath = pathBetween(K, xs, ab, cb, dd+1)
                     sndPath = pathBetween(K, xs, cb, cd, dd+1)
@@ -378,7 +383,8 @@ def main(argv):
                 v = Duplication(names[n], pb, pd-1, seqs)
                 #remapReads(K, L, rds[n], v)
                 #print [posIdx[n][w] for w in [a,b,c,d]]
-                #showAnchoredReads(K, {ab:'AB', cb:'CB', cd:'CD'}, rds[n])
+                if opts['-A']:
+                    showAnchoredReads(K, {ab:'AB', cb:'CB', cd:'CD'}, rds[n])
 
                 vn += 1
 
