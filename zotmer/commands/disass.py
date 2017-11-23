@@ -7,8 +7,10 @@ Usage:
 Options:
     -k K            value of k to use [default: 25]
     -c C            cutoff for distinguishing low and high frequency k-mers [default: 5]
+    -p Prob         subsample k-mers with probability Prob [default: 1.0]
     -q Q            number of quantiles to compute [default: 10]
     -s              perform a single stranded analysis
+    -S Seed         seed for subsampling [default: 17]
     -v              produce verbose output
 
 """
@@ -19,7 +21,7 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import kmersList
+from pykmer.basics import kmersList, sub
 from pykmer.file import openFile, readFasta
 
 def summarize(xs, cut, Q):
@@ -67,6 +69,8 @@ def main(argv):
     K = int(opts['-k'])
     C = int(opts['-c'])
     Q = int(opts['-q'])
+    S = int(opts['-S'])
+    P = float(opts['-p'])
 
     verbose = opts['-v']
 
@@ -86,7 +90,8 @@ def main(argv):
                 ncontig += 1
                 scaff = {}
                 for x in kmersList(K, seq, both):
-                    scaff[x] = 1 + scaff.get(x, 0)
+                    if sub(S, P, x):
+                        scaff[x] = 1 + scaff.get(x, 0)
                 summary = summarize(scaff, C, Q)
                 summary['name'] = nm
                 fres['contigs'].append(summary)

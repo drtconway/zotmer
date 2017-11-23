@@ -5,7 +5,11 @@ Usage:
 Options:
     -c CUTOFF   discard k-mers with frequency less than CUTOFF. A
                 cutoff of 0 (the default) indicates that cutoff
-                inference should be used.
+                inference should be used. [default: 0]
+    -C CUTOFF   discard k-mers with frequency greater than CUTOFF.
+                A cutoff of 0 (the default) indicates that the
+                cutoff value should be effectively infinite.
+                [default: 0]
 """
 
 import math
@@ -47,10 +51,15 @@ def infer(K, h):
             break
     return v[0]
 
-def trim(xs, c):
-    for (x,f) in xs:
-        if f >= c:
-            yield (x, f)
+def trim(xs, c, C):
+    if C is None:
+        for (x,f) in xs:
+            if f >= c:
+                yield (x, f)
+    else:
+        for (x,f) in xs:
+            if f >= c and f <= C:
+                yield (x, f)
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
@@ -61,6 +70,12 @@ def main(argv):
     c = 0
     if opts['-c'] is not None:
         c = int(opts['-c'])
+
+    C = None
+    if opts['-C'] is not None:
+        C0 = int(opts['-C'])
+        if C0 > 0:
+            C = C0
 
     with kmers(inp, 'r') as z:
         K = z.meta['K']
@@ -73,7 +88,7 @@ def main(argv):
             w.meta = z.meta.copy()
             del w.meta['kmers']
             del w.meta['counts']
-            writeKmersAndCounts(w, trim(xs, c))
+            writeKmersAndCounts(w, trim(xs, c, C))
             w.meta['K'] = K
             w.meta['kmers'] = 'kmers'
             w.meta['counts'] = 'counts'
