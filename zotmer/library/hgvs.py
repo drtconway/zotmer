@@ -123,8 +123,23 @@ class HGVS(object):
         assert self.seqFac is not None
         return self.seqFac[self.accession()]
 
+    def cryptic(self):
+        return None
+
     def anonymous(self):
         return False
+
+    def liftover(self, p):
+        (b, e) = self.range()
+        d = self.size() - (e - b)
+
+        if p < b:
+            return p
+        q = p + d
+        if q < b:
+            return b
+        else:
+            return q
 
     def apply(self, s):
         (p,q) = self.range()
@@ -138,24 +153,29 @@ class HGVS(object):
             return rope.concat(a, b)
 
     def context(self, w):
-        wt = self.range()
-        n = self.size()
-        d = wt[0] - wt[1] + n
-        mut = (wt[0], wt[1] + d)
-
         seq = self.loadAccession()
         s = rope.atom(seq)
 
-        r = self.apply(s)
+        rng = self.range()
 
-        wt = (wt[0]-w+1, wt[1]+w-1)
+        wt = (rng[0]-w+1, rng[1]+w-1)
         wt = (max(0, wt[0]), min(wt[1], len(s)))
 
-        mut = (mut[0]-w+1, mut[1]+w-1)
-        mut = (max(0, mut[0]), min(mut[1], len(r)))
-
         wtSeq = s[wt[0]:wt[1]]
-        mutSeq = r[mut[0]:mut[1]]
+
+        n = self.size()
+        if n is not None:
+            r = self.apply(s)
+            d = rng[0] - rng[1] + n
+            mut = (rng[0], rng[1] + d)
+
+            mut = (mut[0]-w+1, mut[1]+w-1)
+            mut = (max(0, mut[0]), min(mut[1], len(r)))
+
+            mutSeq = r[mut[0]:mut[1]]
+        else:
+            # must have been cryptic
+            mutSeq = None
 
         return (wtSeq, mutSeq)
 
@@ -531,6 +551,26 @@ def test_inversion1():
     assert ctx[1] == 'GCTGGGCCGCCCAGGCCGCGCGACCCCGGG'
     assert str(v) == h
 
+class AluInsertion(HGVS):
+    def __init__(self, acc, bef, sf = None):
+        super(AluInsertion, self).__init__(acc, sf)
+        self.bef = bef
+
+    def cryptic(self):
+        return 'Alu'
+
+    def size(self):
+        return None
+
+    def range(self):
+        return (self.bef, self.bef)
+
+    def sequence(self):
+        return None
+
+    def __str__(self):
+        return '%s:g.%d_%dinsALU' % (self.acc, self.bef, self.bef+1)
+
 gvarPfx = re.compile('([^:]+):g\.(.*)$')
 gvarPos = re.compile('([0-9]+)(_([0-9]+))?(.*)$')
 gvarSub = re.compile('([ACGT])>([ACGT])$')
@@ -538,6 +578,7 @@ gvarDel = re.compile('del([ACGT]+)?$')
 gvarDup = re.compile('dup([ACGT]+)?$')
 gvarIns = re.compile('ins([ACGT]+)$')
 gvarAnI = re.compile('ins([0-9]+)$')
+gvarALU = re.compile('insALU$')
 gvarInv = re.compile('inv$')
 gvarDIn = re.compile('delins([ACGT]+)$')
 gvarAnD = re.compile('delins([0-9]+)$')
@@ -600,6 +641,13 @@ def makeHGVS(txt, sf = None):
         ss = m.groups()
         l = int(ss[0])
         return Anonymous(acc, pos1-1, l, sf)
+
+    m = gvarALU.match(s)
+    if m:
+        if pos1 is None:
+            return None
+        pos1 = int(pos1)
+        return AluInsertion(acc, pos1-1, sf)
 
     m = gvarInv.match(s)
     if m:

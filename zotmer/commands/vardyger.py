@@ -25,7 +25,7 @@ import yaml
 
 from pykmer.basics import ham, kmersList, kmersWithPosList, kmersWithPosLists, rc, render
 from pykmer.file import openFile, readFasta, readFastq
-from zotmer.library.debruijn import interpolate, interpolateBetween, pathBetween
+from zotmer.library.debruijn import interpolate
 from zotmer.library.hgvs import Duplication
 from zotmer.library.reads import reads
 from zotmer.library.align import revComp
@@ -287,6 +287,17 @@ def main(argv):
                 px[x].append(p)
             posIdx.append(px)
 
+            for (a, b, c, d) in findDup(wtFst[n], wtLst[n], wtFst[n], wtLst[n]):
+                pps = positions(posIdx[n], J, a, b, c, d)
+                if pps is None:
+                    continue
+                for pp in pps:
+                    ab = a << S | b
+                    cb = c << S | b
+                    cd = c << S | d
+                    dd = pp[2] - pp[0]
+                    print >> sys.stderr, 'warning: phantom dumplication: %s-%s-%s (%d)' % (render(K, ab), render(K, cb), render(K, cd), dd)
+
             rds.append([])
 
     N = len(names)
@@ -348,8 +359,8 @@ def main(argv):
                     continue
 
                 if opts['-s']:
-                    fstPath = pathBetween(K, xs, ab, cb, dd+1)
-                    sndPath = pathBetween(K, xs, cb, cd, dd+1)
+                    fstPath = interpolate(K, xs, ab, cb, dd+1)
+                    sndPath = interpolate(K, xs, cb, cd, dd+1)
 
                     if fstPath is None:
                         continue
@@ -381,8 +392,6 @@ def main(argv):
 
                 hgvs = '%s:c.%d_%ddup' % (names[n], pb, pd - 1)
                 v = Duplication(names[n], pb, pd-1, seqs)
-                #remapReads(K, L, rds[n], v)
-                #print [posIdx[n][w] for w in [a,b,c,d]]
                 if opts['-A']:
                     showAnchoredReads(K, {ab:'AB', cb:'CB', cd:'CD'}, rds[n])
 
@@ -407,6 +416,10 @@ def main(argv):
                 hdrs += ['len']
                 fmts += ['%d']
                 outs += [dd]
+
+                hdrs += ['vaf']
+                fmts += ['%g']
+                outs += [w]
 
                 hdrs += ['hgvs']
                 fmts += ['%s']
