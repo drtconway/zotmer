@@ -14,6 +14,11 @@ Options:
     -N NUMBER       number of read pairs [default: 1000000]
     -S SEED         random number generator seed [default: 23]
     -z              gzip the output
+    -V VAF          variant allele frequency [default: 1.0]
+
+Variants are spiked in right-to-left from the command line or reverse order when read from a file.
+There is no compensation for position in the application of the variants, so they should be specified
+in position order, and overlapping variants won't work.
 """
 
 import math
@@ -133,6 +138,7 @@ def main(argv):
     L = int(opts['-L'])
     N = int(opts['-N'])
     S = int(opts['-S'])
+    V = float(opts['-V'])
 
     random.seed(S)
 
@@ -175,6 +181,7 @@ def main(argv):
     if opts['-z']:
         sfx = '.gz'
     with openFile(pfx + '_1.fastq' + sfx, 'w') as out1, openFile(pfx + '_2.fastq' + sfx, 'w') as out2:
+        wtSeq = None
         currC = None
         currSeq = None
         for (c,i) in sorted(zcs.keys()):
@@ -185,12 +192,18 @@ def main(argv):
                 for v in vs.get(c, [])[::-1]:
                     print >> sys.stderr, 'applying %s' % (str(v), )
                     currSeq = v.apply(currSeq)
+                wtSeq = rope.atom(sf[c])
 
             n = zcs[(c,i)]
             (zb, ze, nm) = zones[c][i]
             for j in xrange(n):
                 u0 = random.randint(zb, ze)
-                u = liftover(vs.get(c, []), u0)
+                if random.random() < V:
+                    u = liftover(vs.get(c, []), u0)
+                    ss = currSeq
+                else:
+                    u = u0
+                    ss = wtSeq
 
                 fl = int(random.gauss(I, I*D))
                 fl = max(fl, L + L // 2)
@@ -202,8 +215,8 @@ def main(argv):
                     rp1 = u - fl
                     rp2 = u - L
 
-                r1 = currSeq[rp1:rp1+L]
-                r2 = currSeq[rp2:rp2+L]
+                r1 = ss[rp1:rp1+L]
+                r2 = ss[rp2:rp2+L]
 
                 if random.random() < 0.5:
                     s = '+'
