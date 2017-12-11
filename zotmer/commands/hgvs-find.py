@@ -26,12 +26,7 @@ The value is a comma separated list. The order of fields is fixed,
 so the order in the format string is irrelevant.  The supported
 fields are:
 
-    chi2            Chi2 statistics
-    kl              Kullback-Leibler statistics
     ks              Kolmogorov-Smirnov statistics
-    hist            Print long format results with the histograms
-    glo             Include global frequency counts in long format results
-
 """
 
 import array
@@ -511,7 +506,7 @@ def nearestPosKmers(K, seq, xps):
             res[p][1] = max(res[p][1], xps[xp])
     return sorted([(p, d, c) for (p, (d,c)) in res.items()])
 
-def posKmersToKmers(xps):
+def posKmersToKmers(K, xps):
     xs = {}
     for xp in xps.iterkeys():
         (x,p) = unpackPosKmer(K, xp)
@@ -549,14 +544,15 @@ def makeIndexedVariant(v, K, L):
         # An anonymous sequence, so extract the flanking k-mers
         rng = v.range()
         big = v.loadAccession()
-        lhsSt = rng[0] - 1 - 2*K
-        lhsEn = rng[0] - 1
+        lhsSt = rng[0] - 2*K
+        lhsEn = rng[0]
         lhs = big[lhsSt:lhsEn]
-        rhsSt = rng[1] - 1
-        rhsEn = rng[1] - 1 + 2*K
+        rhsSt = rng[1]
+        rhsEn = rng[1] + 2*K
         rhs = big[rhsSt:rhsEn]
         r['mutLhs'] = lhs
         r['mutRhs'] = rhs
+        r['mutSeq'] = None
         return r
 
     if v.cryptic() is not None:
@@ -807,32 +803,68 @@ def main(argv):
                         mutMin = min(mutMin, mx[z])
             if mutMin is None:
                 mutMin = 0
-            print mutHs
             mutCdf = counts2cdf(mutHs)
             mutD = ksDistance2(mutCdf, nullCdf)[0]
         else:
             if v.anonymous():
                 # Look for a path linking the ends
+                mx = posKmersToKmers(K, mutRes[n])
+
                 lhs = hgvsVars[n]['mutLhs']
-                lx = kmer(lhs[-K:])
+                # Scan from the right hand end of the lhs
+                # to find the highest coverage extant k-mer
+                lx = None
+                lxc = 0
+                lxp = 0
+                p0 = K
+                for x in kmersList(K, lhs)[::-1]:
+                    if x in mx and mx[x] > lxc:
+                        lx = x
+                        lxc = mx[x]
+                        lxp = p0
+                    p0 += 1
+
                 rhs = hgvsVars[n]['mutRhs']
-                rx = kmer(rhs[-K:])
-                mx = posKmersToKmers(mutRes[n])
-                mutPth = interpolate(K, mx, lx, rx, v.size() + K + 1)
+                # Scan from the left hand end of the rhs
+                # to find the highest coverage extant k-mer
+                rx = None
+                rxc = 0
+                rxp = 0
+                p0 = 1
+                for x in kmersList(K, rhs):
+                    if x in mx and mx[x] > rxc:
+                        rx = x
+                        rxc = mx[x]
+                        rxp = p0
+                    p0 += 1
+
+                mutPth = None
+                if lx is not None and rx is not None:
+                    mutPth = interpolate(K, mx, lx, rx, v.size() + lxp + rxp)
+
                 if mutPth is None:
                     mutSeq = ''
+                    mutPth = []
+                    mutMin = 0
                 else:
+                    mutPth = mutPth[lxp:-(rxp + K - 1)]
                     mutSeq = renderPath(K, mutPth)
+                    assert len(mutSeq) == v.size()
+                    mutMin = min([mx[x] for x in mutPth])
+                mutHs = [0 for j in range(K+1)]
+                for x in mutPth:
+                    mutHs[0] += 1
             else:
                 mutSeq = hgvsVars[n]['mutSeq']
-            mutHits = nearestPosKmers(K, mutSeq, mutRes[n])
-            mutMin = 0
-            if len(mutHits) > 0:
-                mutMin = min([c for (p, d, c) in mutHits])
-            mutHs = [0 for j in range(K+1)]
-            for (p, d, c) in mutHits:
-                if d <= K:
-                    mutHs[d] += 1
+                mutHits = nearestPosKmers(K, mutSeq, mutRes[n])
+                mutMin = 0
+                if len(mutHits) > 0:
+                    mutMin = min([c for (p, d, c) in mutHits])
+                mutHs = [0 for j in range(K+1)]
+                for (p, d, c) in mutHits:
+                    if d <= K:
+                        mutHs[d] += 1
+
             mutCdf = counts2cdf(mutHs)
             mutD = ksDistance2(mutCdf, nullCdf)[0]
 
@@ -884,7 +916,7 @@ def main(argv):
                 hdrs1 = hdrs + ['pos', 'wtHam', 'wtCnt', 'mutHam', 'mutCnt']
                 fmts1 = fmts + ['%d', '%d', '%d', '%d', '%d']
                 outs1 = outs + [p, wd, wc, md, mc]
-                    
+
                 hdrs1 += ['hgvs']
                 fmts1 += ['%s']
                 outs1 += [h]

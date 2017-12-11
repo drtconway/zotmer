@@ -171,6 +171,10 @@ def main(argv):
         if v is None:
             print >> sys.stderr, 'unable to parse variant: %s', (s, )
             continue
+        if v.anonymous():
+            n = v.size()
+            seq = ''.join([random.choice(['A', 'C', 'G', 'T']) for i in range(n)])
+            v.setSequence(seq)
         a = v.accession()
         if a not in vs:
             vs[a] = []

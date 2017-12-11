@@ -36,9 +36,9 @@ def test_is_in_2():
 
 def less_than_max(i, n):
     if isinstance(n, int):
-        return i < n
+        return i <= n
     assert isinstance(n, slice)
-    if n.stop is not None and i >= n.stop:
+    if n.stop is not None and i > n.stop:
         return False
     return True
 
@@ -61,6 +61,16 @@ def test_less_than_max_3():
     n = slice(10)
     for i in range(10):
         assert less_than_max(i, n)
+
+def follows(s, t):
+    if s[1:] != t[:-1]:
+        print '%s\t%s' % (s, t)
+    assert s[1:] == t[:-1]
+
+def cartesian(xs, ys):
+    for x in xs:
+        for y in ys:
+            yield (x,y)
 
 class Interpolator(object):
     def __init__(self, K, xs):
@@ -85,26 +95,33 @@ class Interpolator(object):
 
     def path(self, xb, xe, n):
         fwd = {}
-        fwd[xb] = [xb]
+        fwd[xb] = [[xb]]
         rev = {}
-        rev[xe] = [xe]
+        rev[xe] = [[xe]]
 
-        i = 0
+        i = 1
         while less_than_max(i, n):
-            if is_in(i+1, n):
+            if is_in(i, n):
                 for x in set(fwd.keys()) & set(rev.keys()):
-                    yield fwd[x] + rev[x][1:]
+                    for (fst, snd) in cartesian(fwd[x], rev[x]):
+                        yield fst + snd[1:]
             if (i & 1) == 0:
                 nextFwd = {}
-                for (x,p) in fwd.iteritems():
+                for (x,ps) in fwd.iteritems():
                     for y in self.succ(x):
-                        nextFwd[y] = p + [y]
+                        if y not in nextFwd:
+                            nextFwd[y] = []
+                        for p in ps:
+                            nextFwd[y].append(p + [y])
                 fwd = nextFwd
             else:
                 nextRev = {}
-                for (x,p) in rev.iteritems():
+                for (x,ps) in rev.iteritems():
                     for y in self.pred(x):
-                        nextRev[y] = [y] + p
+                        if y not in nextRev:
+                            nextRev[y] = []
+                        for p in ps:
+                            nextRev[y].append([y] + p)
                 rev = nextRev
             i += 1
 
@@ -113,8 +130,10 @@ class Interpolator(object):
         pMax = None
         for p in self.path(xb, xe, n):
             s = 0
+            cc = []
             for x in p:
                 s += self.xs[x]
+                cc.append(self.xs[x])
             if s > sMax:
                 sMax = s
                 pMax = p
