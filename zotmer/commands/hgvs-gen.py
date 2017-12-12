@@ -5,6 +5,9 @@ Usage:
     zot hgvs-gen [options] <regions>
 
 Options:
+    -D LENGTH       mean length for deletion events [default: 1.5]
+    -I LENGTH       mean length for insertion events [default: 1.5]
+    -U LENGTH       mean length for duplication events [default: 3.0]
     -g PATH         directory of FASTQ reference sequences
     -N NUMBER       number of HGVSg variants to generate [default: 1]
     -S SEED         set a random number seed
@@ -28,6 +31,7 @@ relative probability of prob, with the default being 1.0.
 
 """
 
+import math
 import random
 import sys
 
@@ -36,6 +40,9 @@ from tqdm import tqdm
 
 from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library import hgvs
+
+def geomvar(p):
+    return int(1+math.floor(math.log(random.random())/math.log1p(-p)))
 
 def readBED(f):
     res = {}
@@ -109,7 +116,7 @@ class MultiGen(object):
 bases = ['A','C','G','T']
 alts = {'A':['C','G','T'], 'C':['A','G','T'], 'G':['A','C','T'], 'T':['A','C','G']}
 
-def genVar(c, seq, s, e, ts):
+def genVar(c, seq, s, e, ts, ds):
     f = ts.gen()
     if f == 'sub':
         p = random.randint(s, e)
@@ -118,35 +125,35 @@ def genVar(c, seq, s, e, ts):
         return hgvs.Substitution(c, p, r, a)
     if f == 'del':
         p = random.randint(s, e)
-        l = int(1.99+random.expovariate(0.1))
+        l = geomvar(ds['del'])
         q = min(p+l, e)
         return hgvs.Deletion(c, p, q)
     if f == 'ins':
         p = random.randint(s, e)
-        l = int(0.99+random.expovariate(0.1))
-        a = ''.join([random.choice(bases) for j in range(l)])
+        m = geomvar(ds['ins'])
+        a = ''.join([random.choice(bases) for j in range(m)])
         return hgvs.Insertion(c, p, a)
     if f == 'delins':
         p = random.randint(s, e)
-        l = int(0.99+random.expovariate(0.1))
+        l = geomvar(ds['del'])
         q = min(p+l, e)
-        m = int(0.99+random.expovariate(0.1))
+        m = geomvar(ds['ins'])
         a = ''.join([random.choice(bases) for j in range(m)])
         return hgvs.DeletionInsertion(c, p, q, a)
     if f == 'dup':
         p = random.randint(s, e)
-        l = int(0.99+random.expovariate(0.1))
-        q = min(p+l, e)
+        u = geomvar(ds['dup'])
+        q = min(p+u, e)
         return hgvs.Duplication(c, p, q)
     if f == 'ani':
         p = random.randint(s, e)
-        l = int(0.99+random.expovariate(0.1))
-        return hgvs.Anonymous(c, p, l)
+        m = geomvar(ds['ins'])
+        return hgvs.Anonymous(c, p, m)
     if f == 'and':
         p = random.randint(s, e)
-        l = int(0.99+random.expovariate(0.1))
+        l = geomvar(ds['del'])
         q = min(p+l, e)
-        m = int(0.99+random.expovariate(0.1))
+        m = geomvar(ds['ins'])
         return hgvs.AnonymousDelIns(c, p, q, m)
     print >> sys.stderr, "unknown variant type", f
     sys.exit(1)
@@ -172,6 +179,15 @@ def main(argv):
     Tgen = MultiGen(T)
 
     N = int(opts['-N'])
+
+    D = float(opts['-D'])
+    I = float(opts['-I'])
+    U = float(opts['-U'])
+
+    Ds = {}
+    Ds['del'] = 1.0/D
+    Ds['ins'] = 1.0/I
+    Ds['dup'] = 1.0/U
 
     verbose = opts['-v']
 
@@ -225,7 +241,7 @@ def main(argv):
             prevM = m
             print '# %s : %s' % (c, m)
         for j in xrange(n):
-            v = genVar(c, curSeq, s, e, Tgen)
+            v = genVar(c, curSeq, s, e, Tgen, Ds)
             print str(v)
 
 if __name__ == '__main__':
