@@ -14,6 +14,7 @@ Options:
     -N NUMBER       number of read pairs [default: 1000000]
     -S SEED         random number generator seed [default: 23]
     -z              gzip the output
+    -v              produce verbose progress messages
     -V VAF          variant allele frequency [default: 1.0]
 
 Variants are spiked in right-to-left from the command line or reverse order when read from a file.
@@ -26,6 +27,7 @@ import random
 import sys
 
 import docopt
+from tqdm import tqdm
 
 from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19
@@ -152,7 +154,9 @@ def main(argv):
 
     zps = []
     t = 0
+    maxC = 0
     for c in zones.keys():
+        maxC = max(maxC, len(c))
         for i in range(len(zones[c])):
             (s, e, _n) = zones[c][i]
             l = e - s + 1
@@ -180,6 +184,20 @@ def main(argv):
             vs[a] = []
         vs[a].append(v)
 
+    numOverlaps = 0
+    for xs in vs.values():
+        for i in range(len(xs)):
+            for j in range(i + 1, len(xs)):
+                if xs[i].overlaps(xs[j]):
+                    print >> sys.stderr, "variants overlap: %s <> %s" % (str(xs[i]), str(xs[j]))
+                    numOverlaps += 1
+    if numOverlaps > 0:
+        sys.exit(1)
+
+    prog = None
+    if opts['-v']:
+        prog = tqdm(total = N, unit='pairs')
+
     pfx = opts['<output-prefix>']
     sfx = ''
     if opts['-z']:
@@ -190,16 +208,19 @@ def main(argv):
         currSeq = None
         for (c,i) in sorted(zcs.keys()):
             if c != currC:
-                print >> sys.stderr, 'loading %s' % (c, )
+                if prog is not None:
+                    prog.set_description(c.ljust(maxC, ' '))
+                    prog.update(0)
                 currC = c
                 currSeq = rope.atom(sf[c])
                 for v in vs.get(c, [])[::-1]:
-                    print >> sys.stderr, 'applying %s' % (str(v), )
                     currSeq = v.apply(currSeq)
                 wtSeq = rope.atom(sf[c])
 
             n = zcs[(c,i)]
             (zb, ze, nm) = zones[c][i]
+            if prog is not None:
+                prog.update(n)
             for j in xrange(n):
                 u0 = random.randint(zb, ze)
                 if random.random() < V:
@@ -241,6 +262,8 @@ def main(argv):
                 print >> out2, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s] + e2)
                 print >> out2, r2
                 #print >> out2, '\t'.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s, r2] + e2)
+    if prog is not None:
+        prog.__exit__(None, None, None)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

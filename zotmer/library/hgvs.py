@@ -179,6 +179,28 @@ class HGVS(object):
 
         return (wtSeq, mutSeq)
 
+    def __cmp__(self, other):
+        if self.accession() != other.accession():
+            return cmp(self.accession(), other.accession())
+        xr = self.range()
+        yr = other.range()
+        if xr == yr:
+            return 0
+        if xr[1] < yr[0]:
+            return -1
+        if yr[1] < xr[0]:
+            return 1
+        return NotImplemented
+
+    def overlaps(self, other):
+        if self.accession() != other.accession():
+            return False
+
+        r = cmp(self, other)
+        if r == NotImplemented or r == 0:
+            return True
+        return False
+
 class Substitution(HGVS):
     def __init__(self, acc, pos, ref, var, sf = None):
         super(Substitution, self).__init__(acc, sf)
