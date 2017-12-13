@@ -816,13 +816,14 @@ def main(argv):
                 lx = None
                 lxc = 0
                 lxp = 0
-                p0 = K
-                for x in kmersList(K, lhs)[::-1]:
-                    if x in mx and mx[x] > lxc:
+                p0 = len(lhs) - K
+                for x in kmersList(K, lhs):
+                    # resolve equals by preferring the right-most
+                    if x in mx and mx[x] >= lxc:
                         lx = x
                         lxc = mx[x]
                         lxp = p0
-                    p0 += 1
+                    p0 -= 1
 
                 rhs = hgvsVars[n]['mutRhs']
                 # Scan from the left hand end of the rhs
@@ -830,8 +831,9 @@ def main(argv):
                 rx = None
                 rxc = 0
                 rxp = 0
-                p0 = 1
+                p0 = 0
                 for x in kmersList(K, rhs):
+                    # resolve equals by preferring the left-most
                     if x in mx and mx[x] > rxc:
                         rx = x
                         rxc = mx[x]
@@ -840,17 +842,19 @@ def main(argv):
 
                 mutPth = None
                 if lx is not None and rx is not None:
-                    mutPth = interpolate(K, mx, lx, rx, v.size() + lxp + rxp)
+                    print lxp, render(K, lx), rxp, render(K, rx), v.size()
+                    ll = v.size() + lxp + rxp + 1 + K
+                    mutPth = interpolate(K, mx, lx, rx, ll)
 
                 if mutPth is None:
                     mutSeq = ''
                     mutPth = []
                     mutMin = 0
                 else:
-                    mutPth = mutPth[lxp:-(rxp + K - 1)]
                     mutSeq = renderPath(K, mutPth)
+                    mutSeq = mutSeq[lxp+K:-(rxp+K)]
                     assert len(mutSeq) == v.size()
-                    mutMin = min([mx[x] for x in mutPth])
+                    mutMin = min([mx[x] for x in mutPth[1:-1]])
                 mutHs = [0 for j in range(K+1)]
                 for x in mutPth:
                     mutHs[0] += 1
