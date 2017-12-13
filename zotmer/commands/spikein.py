@@ -11,8 +11,9 @@ Options:
     -g DIR          directory containing reference sequences [default: .]
     -I SIZE         insert size [default: 300]
     -L LENGTH       read length [default: 100]
+    -M PROB         introduce extra substitution mutations around the variants with the given per-base probability
     -N NUMBER       number of read pairs [default: 1000000]
-    -S SEED         random number generator seed [default: 23]
+    -S SEED         random number generator seed
     -z              gzip the output
     -v              produce verbose progress messages
     -V VAF          variant allele frequency [default: 1.0]
@@ -30,7 +31,7 @@ import docopt
 from tqdm import tqdm
 
 from pykmer.file import openFile, readFasta, readFastq
-from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19
+from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19, Substitution
 from zotmer.library.rope import rope
 
 class SequenceFactory(object):
@@ -139,10 +140,19 @@ def main(argv):
     E = float(opts['-e'])
     L = int(opts['-L'])
     N = int(opts['-N'])
-    S = int(opts['-S'])
     V = float(opts['-V'])
 
-    random.seed(S)
+    M = None
+    if opts['-M'] is not None:
+        M = float(opts['-M'])
+        # compute the 99% quantile
+        W = int(math.log1p(-0.99)/math.log1p(-M))
+        print "W = %g" % (W,)
+
+    S = None
+    if opts['-S'] is not None:
+        S = int(opts['-S'])
+        random.seed(S)
 
     if opts['-b']:
         zones = readBED(openFile(opts['-b']))
@@ -162,6 +172,10 @@ def main(argv):
             l = e - s + 1
             zps.append((l, (c,i)))
             t += l
+
+    if opts['-v']:
+        print >> sys.stderr, 'mean coverage = %g' % (float(N*L)/float(t),)
+
     zps = [(float(l)/float(t), c) for (l,c) in zps]
     zgen = MultiGen(zps)
     zcs = dict([(c,0) for (p,c) in zps])
@@ -186,6 +200,7 @@ def main(argv):
 
     numOverlaps = 0
     for xs in vs.values():
+        xs.sort()
         for i in range(len(xs)):
             for j in range(i + 1, len(xs)):
                 if xs[i].overlaps(xs[j]):
@@ -212,8 +227,32 @@ def main(argv):
                     prog.set_description(c.ljust(maxC, ' '))
                     prog.update(0)
                 currC = c
-                currSeq = rope.atom(sf[c])
-                for v in vs.get(c, [])[::-1]:
+                seq = sf[c]
+                currSeq = rope.atom(seq)
+                given = vs.get(c, [])
+                if M is not None:
+                    extra = set([])
+                    for v in given:
+                        vr = v.range()
+                        for p in range(max(0, vr[0]-W), vr[0]+1) + range(vr[1]+1, min(vr[1]+W, len(seq))):
+                            if random.random() < M:
+                                extra.add(p)
+                    ok = []
+                    for p in extra:
+                        r = seq[p].upper()
+                        w = Substitution(c, p, r, random.choice(altDict[r]))
+                        hit = False
+                        for v in given:
+                            if v.overlaps(w):
+                                hit = True
+                                break
+                        if not hit:
+                            ok.append(w)
+                    for w in ok:
+                        print 'added', str(w)
+                    given += ok
+                    given.sort()
+                for v in given[::-1]:
                     currSeq = v.apply(currSeq)
                 wtSeq = rope.atom(sf[c])
 
