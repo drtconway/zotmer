@@ -76,7 +76,7 @@ class reads(object):
                 if self.verbose:
                     pfx = ' & '.join([basename(self.files[i]) for i in range(self.currFilesInd, self.currFilesInd+self.N)])
                     self.progress = tqdm(unit=' reads', unit_scale=True)
-                    self.progress.set_postfix(processing=pfx, refresh=True)
+                    self.progress.set_postfix(reading=pfx, refresh=True)
 
                 self.currParsers = []
                 for i in range(self.currFilesInd, self.currFilesInd+self.N):
