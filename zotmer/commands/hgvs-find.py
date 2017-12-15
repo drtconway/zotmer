@@ -14,8 +14,6 @@ Options:
     -F FORMAT       a format string for printing results [default: ks]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
-    -L LENGTH       nominal read length (for indexing) [default: 100]
-    -p FILE         pulldown reads for variant hits into the named zip-file.
     -s              single stranded k-mer extraction
     -v              produce verbose output
 
@@ -540,42 +538,29 @@ def subtractFlanks(K, flankKmers, xps):
         xs[x] = c + xs.get(x, 0)
     return xs
 
-def makeIndexedVariant(v, K, L):
-    (wtSeq, mutSeq) = v.context(K)
-
+def makeIndexedVariant(v, K):
     r = {}
     r['hgvs'] = str(v)
-    r['wtSeq'] = wtSeq
-    r['mutSeq'] = mutSeq
-
-    if v.anonymous():
-        # An anonymous sequence, so extract the flanking k-mers
-        rng = v.range()
-        big = v.loadAccession()
-        lhsSt = rng[0] - 2*K
-        lhsEn = rng[0]
-        lhs = big[lhsSt:lhsEn]
-        rhsSt = rng[1]
-        rhsEn = rng[1] + 2*K
-        rhs = big[rhsSt:rhsEn]
-        r['mutLhs'] = lhs
-        r['mutRhs'] = rhs
+    rng = v.range()
+    big = v.loadAccession()
+    lhsSt = rng[0] - 2*K
+    lhsEn = rng[0]
+    lhs = big[lhsSt:lhsEn]
+    rhsSt = rng[1]
+    rhsEn = rng[1] + 2*K
+    rhs = big[rhsSt:rhsEn]
+    r['lhsFlank'] = lhs
+    r['rhsFlank'] = rhs
+    r['wtSeq'] = big[rng[0]:rng[1]]
+    if v.anonymous() or v.cryptic():
         r['mutSeq'] = None
-        return r
+    else:
+        r['mutSeq'] = v.sequence()
 
-    if v.cryptic() is not None:
-        # A cryptic sequence insertion, so extract the flanking k-mers
-        rng = v.range()
-        big = v.loadAccession()
-        lhsSt = rng[0] - 1 - 2*K
-        lhsEn = rng[0] - 1
-        lhs = big[lhsSt:lhsEn]
-        rhsSt = rng[1] - 1
-        rhsEn = rng[1] - 1 + 2*K
-        rhs = big[rhsSt:rhsEn]
-        r['mutLhs'] = lhs
-        r['mutRhs'] = rhs
-        return r
+    return r
+
+def checkVariant(v, K):
+    (wtSeq, mutSeq) = v.context(K)
 
     # A regular variant
     wtXs = set(kmers(K, wtSeq, False))
@@ -587,14 +572,93 @@ def makeIndexedVariant(v, K, L):
         print >> sys.stderr, "variant has no distinguishing k-mers: %s" % (str(v),)
         print >> sys.stderr, wtSeq
         print >> sys.stderr, mutSeq
-        return None
-    return r
+        return False
+    return True
 
 def addProbesToIdx(n, xs, idx):
     for x in xs:
         if x not in idx:
             idx[x] = set([])
         idx[x].add(n)
+
+def findHits(idx, xs):
+    r = set([])
+    e = set([])
+    for x in xs:
+        r |= idx.get(x, e)
+    return r
+
+def debruijn(K, x, y):
+    M = (1 << 2*(K-1)) - 1
+    return (x&M) == (y >> 2)
+
+def findAnchors(K, seq, mx, isLhs):
+    xps = kmersWithPosList(K, seq, False)
+    xps = [(x, p-1) for (x,p) in xps]
+
+    # Find the highest coverage k-mer that intersects.
+    xc = 0
+    for (x,p) in xps:
+        if x in mx and mx[x] >= xc:
+            xc = mx[x]
+
+    if xc == 0:
+        return set([])
+
+    # Seeds should be in the same order of magnitude
+    # as the highest-coverage seed.
+    t = int(math.exp(math.log(xc) - 1.5))
+
+    xs = {}
+    for (x,c) in mx.iteritems():
+        if c < t:
+            continue
+        xs[x] = c
+
+    ys = xs.keys()
+
+    zs = {}
+    for (x,p) in xps:
+        zs[p] = set([])
+
+        if x not in xs:
+            continue
+
+        for y in ys:
+            d = ham(x, y)
+            if d > 2:
+                continue
+            zs[p].add(y)
+
+    e = set([])
+    res = set([])
+    if isLhs:
+        for (x,p) in xps:
+            ss = zs.get(p, e)
+            tt = zs.get(p-1, e)
+            for s in ss:
+                res.add((s,p))
+                for t in tt:
+                    if debruijn(K, t, s):
+                        res.discard((t,p-1))
+    else:
+        for (x,p) in xps[::-1]:
+            ss = zs.get(p, e)
+            tt = zs.get(p+1, e)
+            for s in ss:
+                res.add((s,p))
+                for t in tt:
+                    print '%s\t%s\t%d' % (render(K, s), render(K, t), debruijn(K, s, t))
+                    if debruijn(K, s, t):
+                        res.discard((t,p+1))
+
+    res = list(res)
+    res.sort()
+
+    for (x,p) in res:
+        print '%d\t%s\t%d' % (p, render(K, x), mx[x])
+
+    return res
 
 class SequenceFactory(object):
     def __init__(self, home):
@@ -620,8 +684,6 @@ def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     K = int(opts['-k'])
-
-    L = int(opts['-L'])
 
     verbose = opts['-v']
 
@@ -651,7 +713,8 @@ def main(argv):
         rs = []
         for (acc, vs) in vx.iteritems():
             for v in vs:
-                r = makeIndexedVariant(v, K, L)
+                checkVariant(v, K)
+                r = makeIndexedVariant(v, K)
                 if r is not None:
                     rs.append(r)
 
@@ -670,43 +733,15 @@ def main(argv):
 
     V = len(hgvsVars)
 
-    wtIdx = {}
-    mutIdx = {}
-    mutNegIdx = {}
-
-    wtPosIdx = PositionalKmerIndex(K)
-    mutPosIdx = PositionalKmerIndex(K)
+    probeIdx = {}
 
     for n in range(V):
         itm = hgvsVars[n]
         h = itm['hgvs']
         v = makeHGVS(h)
         itm['var'] = v
-        wtProbes = set(kmersWithPosList(K, itm['wtSeq'], False))
-        if v.anonymous() or v.cryptic():
-            mutProbes = set(kmers(K, itm['mutLhs'], False)) | set(kmers(K, itm['mutRhs'], False))
-            mutNegProbes = wtProbes - mutProbes
-        else:
-            mutProbes = set(kmersWithPosList(K, itm['mutSeq'], False))
-            com = wtProbes - mutProbes
-            wtProbes -= com
-            mutProbes -= com
-            mutNegProbes = set([])
-        itm['wtProbes'] = wtProbes
-        itm['mutProbes'] = mutProbes
-        itm['mutNegProbes'] = mutNegProbes
-
-        #for x in mutProbes:
-        #    print n, render(K, x)
-        addProbesToIdx(n, wtProbes, wtIdx)
-        addProbesToIdx(n, mutProbes, mutIdx)
-        addProbesToIdx(n, mutNegProbes, mutNegIdx)
-
-        wtPosIdx.addSeq(itm['wtSeq'])
-        if itm['mutSeq'] is not None:
-            mutPosIdx.addSeq(itm['mutSeq'])
-        else:
-            mutPosIdx.addSeq(itm['mutLhs'], itm['mutRhs'])
+        probes = set(kmersList(K, itm['lhsFlank'], True) + kmersList(K, itm['rhsFlank'], True))
+        addProbesToIdx(n, probes, probeIdx)
 
     if verbose:
         print >> sys.stderr, "done."
@@ -715,204 +750,38 @@ def main(argv):
     if opts['-s']:
         combineStrands = False
 
-    pulldown = None
-    if opts['-p']:
-        pulldown = {}
-
-    wtRes = [{} for n in range(V)]
-    wtRawRes = [{} for n in range(V)]
-    mutRes = [{} for n in range(V)]
-    mutRawRes = [{} for n in range(V)]
+    kmerHits = [{} for n in range(V)]
 
     rn = 0
     #for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=True, both=True, verbose=verbose):
         rn += 1
         for (rd0, rd1) in [itm.reads, itm.reads[::-1]]:
+            hits = set([])
+            for xs in itm.kmers:
+                hits |= findHits(probeIdx, xs)
             wtFound = set([])
-            for (n, pxs) in wtPosIdx.find(rd0[1]):
-                wtFound.add(n)
-                for px in pxs:
-                    wtRes[n][px] = 1 + wtRes[n].get(px, 0)
-            for (n, pxs) in wtPosIdx.find(rd1[1]):
-                wtFound.add(n)
-                for px in pxs:
-                    wtRes[n][px] = 1 + wtRes[n].get(px, 0)
 
-            for n in wtFound:
+            for n in hits:
                 for xs in itm.kmers:
                     for x in xs:
-                        wtRawRes[n][x] = 1 + wtRawRes[n].get(x, 0)
-
-            mutFound = set([])
-            for (n, pxs) in mutPosIdx.find(rd0[1]):
-                mutFound.add(n)
-                for px in pxs:
-                    mutRes[n][px] = 1 + mutRes[n].get(px, 0)
-            for (n, pxs) in mutPosIdx.find(rd1[1]):
-                mutFound.add(n)
-                for px in pxs:
-                    mutRes[n][px] = 1 + mutRes[n].get(px, 0)
-
-            for n in mutFound:
-                for xs in itm.kmers:
-                    for x in xs:
-                        mutRawRes[n][x] = 1 + mutRawRes[n].get(x, 0)
-
-                if pulldown is not None:
-                    if n not in pulldown:
-                        pulldown[n] = []
-                    pulldown[n] += itm.reads
+                        kmerHits[n][x] = 1 + kmerHits[n].get(x, 0)
 
     Q = 10
     nullCdf = pdf2cdf(nullModelPdf(K))
 
     hdrShown = False
     for n in range(V):
-        v = hgvsVars[n]['var']
-        h = hgvsVars[n]['hgvs']
+        itm = hgvsVars[n]
+        v = itm['var']
+        h = itm['hgvs']
 
-        if 'hist' in fmt:
-            wtHist = {}
-            for (x,c) in wtRawRes[n].iteritems():
-                wtHist[c] = 1 + wtHist.get(c, 0)
-            for (c,f) in sorted(wtHist.items()):
-                print '%d\twt\t%d\t%d' % (n, c, f)
+        mx = kmerHits[n]
 
-            mutHist = {}
-            for (x,c) in mutRawRes[n].iteritems():
-                mutHist[c] = 1 + mutHist.get(c, 0)
-            for (c,f) in sorted(mutHist.items()):
-                print '%d\tmut\t%d\t%d' % (n, c, f)
+        findAnchors(K, itm['lhsFlank'], mx, True)
+        findAnchors(K, itm['rhsFlank'], mx, False)
 
-        wtSeq = hgvsVars[n]['wtSeq']
-        wtHits = nearestPosKmers(K, wtSeq, wtRes[n])
-        wtMin = 0
-        if len(wtHits) > 0:
-            wtMin = min([c for (p, d, c) in wtHits])
-        wtHs = [0 for j in range(K+1)]
-        for (p, d, c) in wtHits:
-            if d <= K:
-                wtHs[d] += 1
-        wtCdf = counts2cdf(wtHs)
-        wtD = ksDistance2(wtCdf, nullCdf)[0]
-
-        if v.cryptic() is not None:
-            # Decide if it looks like there as an ALU
-            # between the endpoints
-            lhs = hgvsVars[n]['mutLhs']
-            rhs = hgvsVars[n]['mutRhs']
-            alu = kmersList(K, AluY, True)
-            flanks = set(kmersList(K, lhs, True)) | set(kmersList(K, rhs, True)) | set(kmersList(K, wtSeq, True))
-            mx = subtractFlanks(K, flanks, mutRes[n])
-            for (x,c) in mx.iteritems():
-                j = 0
-                zs = []
-                for y in alu:
-                    j0 = lcp(K, x, y)
-                    if j0 < j:
-                        continue
-                    if j0 > j:
-                        j = j0
-                        zs = []
-                    zs.append(y)
-                z = random.choice(zs)
-                print '%d\t%s\t%d\t%d\t%s' % (n, render(K, x), c, j, render(K, z))
-            mutHs = [0 for j in range(K+1)]
-            mutMin = None
-            for x in kmersList(K, AluY, False):
-                # Hamming
-                #d = K+1
-                #z = None
-                #for y in mx.iterkeys():
-                #    d0 = ham(x, y)
-                #    if d0 < d:
-                #        d = d0
-                #        z = y
-                # Longest Prefix
-                d = 0
-                z = None
-                for y in mx.iterkeys():
-                    d0 = lcp(K, x, y)
-                    if d0 > d:
-                        d = d0
-                        z = y
-                if z is not None:
-                    mutHs[d] += mx[z]
-                    if mutMin is None:
-                        mutMin = mx[z]
-                    else:
-                        mutMin = min(mutMin, mx[z])
-            if mutMin is None:
-                mutMin = 0
-            mutCdf = counts2cdf(mutHs)
-            mutD = ksDistance2(mutCdf, nullCdf)[0]
-        else:
-            if v.anonymous():
-                # Look for a path linking the ends
-                mx = posKmersToKmers(K, mutRes[n])
-
-                lhs = hgvsVars[n]['mutLhs']
-                # Scan from the right hand end of the lhs
-                # to find the highest coverage extant k-mer
-                lx = None
-                lxc = 0
-                lxp = 0
-                p0 = len(lhs) - K
-                for x in kmersList(K, lhs):
-                    # resolve equals by preferring the right-most
-                    if x in mx and mx[x] >= lxc:
-                        lx = x
-                        lxc = mx[x]
-                        lxp = p0
-                    p0 -= 1
-
-                rhs = hgvsVars[n]['mutRhs']
-                # Scan from the left hand end of the rhs
-                # to find the highest coverage extant k-mer
-                rx = None
-                rxc = 0
-                rxp = 0
-                p0 = 0
-                for x in kmersList(K, rhs):
-                    # resolve equals by preferring the left-most
-                    if x in mx and mx[x] > rxc:
-                        rx = x
-                        rxc = mx[x]
-                        rxp = p0
-                    p0 += 1
-
-                mutPth = None
-                if lx is not None and rx is not None:
-                    print lxp, render(K, lx), rxp, render(K, rx), v.size()
-                    ll = v.size() + lxp + rxp + 1 + K
-                    mutPth = interpolate(K, mx, lx, rx, ll)
-
-                if mutPth is None:
-                    mutSeq = ''
-                    mutPth = []
-                    mutMin = 0
-                else:
-                    mutSeq = renderPath(K, mutPth)
-                    mutSeq = mutSeq[lxp+K:-(rxp+K)]
-                    assert len(mutSeq) == v.size()
-                    mutMin = min([mx[x] for x in mutPth[1:-1]])
-                mutHs = [0 for j in range(K+1)]
-                for x in mutPth:
-                    mutHs[0] += 1
-            else:
-                mutSeq = hgvsVars[n]['mutSeq']
-                mutHits = nearestPosKmers(K, mutSeq, mutRes[n])
-                mutMin = 0
-                if len(mutHits) > 0:
-                    mutMin = min([c for (p, d, c) in mutHits])
-                mutHs = [0 for j in range(K+1)]
-                for (p, d, c) in mutHits:
-                    if d <= K:
-                        mutHs[d] += 1
-
-            mutCdf = counts2cdf(mutHs)
-            mutD = ksDistance2(mutCdf, nullCdf)[0]
+        return
 
         hdrs = ['n']
         fmts = ['%d']
@@ -997,13 +866,6 @@ def main(argv):
             hdrShown = True
             print '\t'.join(hdrs)
         print '\t'.join(fmts) % tuple(outs)
-
-    if pulldown is not None:
-        with zipfile.ZipFile(opts['-p'], 'w', zipfile.ZIP_DEFLATED) as zf:
-            for n in sorted(pulldown.keys()):
-                h = hgvsVars[n]['hgvs']
-                rds = pulldown[n]
-                zf.writestr(h + '.fastq', '\n'.join(rds))
 
 if __name__ == '__main__':
     main(sys.argv[1:])
