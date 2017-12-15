@@ -7,9 +7,10 @@ Usage:
 Options:
     -b BEDFILE      restrict sampling of reads to regions in the BED file
     -d DEVIATION    standard deviation of insert sizes (proportion of mean) [default: 0.1]
-    -e RATE         error rate [default: 0.01]
+    -e RATE         error rate [default: 0.005]
     -g DIR          directory containing reference sequences [default: .]
     -I SIZE         insert size [default: 300]
+    -l FILE         log file for introduced mutations
     -L LENGTH       read length [default: 100]
     -M PROB         introduce extra substitution mutations around the variants with the given per-base probability
     -N NUMBER       number of read pairs [default: 1000000]
@@ -31,6 +32,7 @@ import docopt
 from tqdm import tqdm
 
 from pykmer.file import openFile, readFasta, readFastq
+from pykmer.misc import uniq
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19, Substitution
 from zotmer.library.rope import rope
 
@@ -74,6 +76,25 @@ class MultiGen(object):
                 l = m + 1
         return self.cum[l][1]
 
+class GeomVarSource(object):
+    def __init__(self, p):
+        self.l1mp = math.log1p(-p)
+
+    def __call__(self):
+        return int(math.log(random.random()) / self.l1mp)
+
+    def make(self, lo, hi):
+        r = []
+        j = lo
+        i = 0
+        while True:
+            j += i + self()
+            if j >= hi:
+                break
+            i = 1
+            r.append(j)
+        return r
+
 rcDict = {'A':'T', 'C':'G', 'G':'C', 'T':'A'}
 
 def revComp(s):
@@ -90,18 +111,21 @@ altDict['T'] = ['A', 'C', 'G']
 
 bases = ['A', 'C', 'G', 'T']
 
-def mutate(E, seq):
-    r = []
+def mutate(egen, seq):
+    ps = egen.make(0, len(seq))
+
+    seq = seq.upper()
+
+    if len(ps) == 0:
+        return (seq, [])
+
+    r = [seq[i] for i in range(len(seq))]
     e = []
-    i = 0
-    for c in seq:
-        c = c.upper()
-        if random.random() < E:
-            d = random.choice(altDict.get(c, bases))
-            e.append('%d%s>%s' % (i, c, d))
-            c = d
-        r.append(c)
-        i += 1
+    for p in ps:
+        c = r[p]
+        d = random.choice(altDict.get(c, bases))
+        e.append('%d%s>%s' % (p, c, d))
+        r[p] = d
     return (''.join(r), e)
 
 def readBED(f):
@@ -147,7 +171,6 @@ def main(argv):
         M = float(opts['-M'])
         # compute the 99% quantile
         W = int(math.log1p(-0.99)/math.log1p(-M))
-        print "W = %g" % (W,)
 
     S = None
     if opts['-S'] is not None:
@@ -213,6 +236,15 @@ def main(argv):
     if opts['-v']:
         prog = tqdm(total = N, unit='pairs')
 
+    egen = GeomVarSource(E)
+
+    fasta = False
+    quals = 'I' * L
+
+    logfile = None
+    if opts['-l']:
+        logfile = open(opts['-l'], 'w')
+
     pfx = opts['<output-prefix>']
     sfx = ''
     if opts['-z']:
@@ -228,15 +260,18 @@ def main(argv):
                     prog.update(0)
                 currC = c
                 seq = sf[c]
+                Z = len(seq)
                 currSeq = rope.atom(seq)
                 given = vs.get(c, [])
                 if M is not None:
-                    extra = set([])
+                    extra = []
+                    mgen = GeomVarSource(M)
                     for v in given:
                         vr = v.range()
-                        for p in range(max(0, vr[0]-W), vr[0]+1) + range(vr[1]+1, min(vr[1]+W, len(seq))):
-                            if random.random() < M:
-                                extra.add(p)
+                        extra += mgen.make(max(0, vr[0] - W), vr[0])
+                        extra += mgen.make(vr[1], min(vr[1] + W, Z))
+                    extra.sort()
+                    uniq(extra)
                     ok = []
                     for p in extra:
                         r = seq[p].upper()
@@ -248,10 +283,15 @@ def main(argv):
                                 break
                         if not hit:
                             ok.append(w)
-                    for w in ok:
-                        print 'added', str(w)
+                    if logfile is not None:
+                        for v in ok:
+                            print >> logfile, str(v)
                     given += ok
                     given.sort()
+                    if prog is not None and len(given) > 0:
+                        prog.write("spiking in the following variants:")
+                        for v in given:
+                            prog.write('\t' + str(v))
                 for v in given[::-1]:
                     currSeq = v.apply(currSeq)
                 wtSeq = rope.atom(sf[c])
@@ -291,16 +331,26 @@ def main(argv):
                     r2 = revComp(r1)
                     r1 = tmp
 
-                (r1, e1) = mutate(E, r1)
-                (r2, e2) = mutate(E, r2)
+                (r1, e1) = mutate(egen, r1)
+                (r2, e2) = mutate(egen, r2)
 
-                print >> out1, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp1), str(fl), s] + e1)
-                print >> out1, r1
                 #print >> out1, '\t'.join([c, str(zb), str(ze), nm, str(rp1), str(fl), s, r1] + e1)
-
-                print >> out2, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s] + e2)
-                print >> out2, r2
                 #print >> out2, '\t'.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s, r2] + e2)
+                if fasta:
+                    print >> out1, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp1), str(fl), s] + e1)
+                    print >> out1, r1
+                    print >> out2, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s] + e2)
+                    print >> out2, r2
+                else:
+                    print >> out1, '@' + ' '.join([c, str(zb), str(ze), nm, str(rp1), str(fl), s] + e1)
+                    print >> out1, r1
+                    print >> out1, '+'
+                    print >> out1, quals
+                    print >> out2, '@' + ' '.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s] + e2)
+                    print >> out2, r2
+                    print >> out2, '+'
+                    print >> out2, quals
+
     if prog is not None:
         prog.__exit__(None, None, None)
 

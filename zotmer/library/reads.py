@@ -10,6 +10,11 @@ from pykmer.file import openFile, readFasta, readFastq
 
 compressionSuffixes = ['.gz', '.bz2']
 
+class Reads(object):
+    def __init__(self):
+        self.reads = []
+        self.kmers = []
+
 def stripCompressionSuffix(nm):
     for suff in compressionSuffixes:
         if nm.endswith(suff):
@@ -104,15 +109,17 @@ class reads(object):
                 self.currKmers = []
                 for rd in self.currReads:
                     if self.fwdOnly:
-                        self.currKmers.append((kmersList(self.K, rd[1], False),))
+                        self.currKmers.append(kmersList(self.K, rd[1], False))
                     elif self.both:
-                        self.currKmers.append((kmersList(self.K, rd[1], True),))
+                        self.currKmers.append(kmersList(self.K, rd[1], True))
                     else:
                         assert self.separate
                         self.currKmers.append(kmersLists(self.K, rd[1]))
 
+            res = Reads()
+
             if self.reads:
-                if self.kmers:
-                    return (self.currReads, self.currKmers)
-                return self.currReads
-            return self.currKmers
+                res.reads = self.currReads
+            if self.kmers:
+                res.kmers = self.currKmers
+            return res

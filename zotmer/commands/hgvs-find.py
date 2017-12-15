@@ -27,6 +27,7 @@ so the order in the format string is irrelevant.  The supported
 fields are:
 
     ks              Kolmogorov-Smirnov statistics
+    hist            produce k-mer frequency histograms
 """
 
 import array
@@ -449,11 +450,15 @@ class PositionalKmerIndex(object):
     def find(self, seq):
         hits = {}
         (xs, ys) = kmersWithPosLists(self.K, seq)
+
+        # For each strand compute the putative offset
+        # (if any) of the k-mer on any variants it hits
+        #
         for (zs, s) in [(xs, True), (ys, False)]:
             for (x,p) in zs:
                 if x not in self.idx:
                     continue
-                p -= 1
+                p -= 1  # revert to 0-based indexing
                 for (n,q) in self.idx[x]:
                     qp = (q - p, s)
                     if n not in hits:
@@ -462,6 +467,9 @@ class PositionalKmerIndex(object):
                         hits[n][qp] = 0
                     hits[n][qp] += 1
 
+        # For each variant with hits, pick the most-voted
+        # offset/strand, keeping equal-most.
+        #
         cand = {}
         for (n, ps) in hits.items():
             for ((p,s),c) in ps.items():
@@ -488,10 +496,10 @@ def nearestPosKmers(K, seq, xps):
     res = {}
     for (x,p) in kmersWithPosList(K, seq, False):
         p -= 1
-        assert p not in idx
         idx[p] = x
         res[p] = [K+1, 0]
 
+    print seq
     for xp in xps.iterkeys():
         (x,p) = unpackPosKmer(K, xp)
         if p not in idx:
@@ -712,28 +720,49 @@ def main(argv):
         pulldown = {}
 
     wtRes = [{} for n in range(V)]
+    wtRawRes = [{} for n in range(V)]
     mutRes = [{} for n in range(V)]
+    mutRawRes = [{} for n in range(V)]
 
     rn = 0
     #for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
-    for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=False, both=True, verbose=verbose):
+    for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=True, both=True, verbose=verbose):
         rn += 1
-        #fq = itm[0][0]         # Read, End-0
-        #xs = itm[1][0][0]      # Kmers, End-0, Strand-0
-        fq = itm[0]      # Read, End-0
+        for (rd0, rd1) in [itm.reads, itm.reads[::-1]]:
+            wtFound = set([])
+            for (n, pxs) in wtPosIdx.find(rd0[1]):
+                wtFound.add(n)
+                for px in pxs:
+                    wtRes[n][px] = 1 + wtRes[n].get(px, 0)
+            for (n, pxs) in wtPosIdx.find(rd1[1]):
+                wtFound.add(n)
+                for px in pxs:
+                    wtRes[n][px] = 1 + wtRes[n].get(px, 0)
 
-        for (n, pxs) in wtPosIdx.find(fq[1]):
-            for px in pxs:
-                wtRes[n][px] = 1 + wtRes[n].get(px, 0)
+            for n in wtFound:
+                for xs in itm.kmers:
+                    for x in xs:
+                        wtRawRes[n][x] = 1 + wtRawRes[n].get(x, 0)
 
-        for (n, pxs) in mutPosIdx.find(fq[1]):
-            v = hgvsVars[n]['var']
-            for px in pxs:
-                mutRes[n][px] = 1 + mutRes[n].get(px, 0)
-            if pulldown is not None:
-                if n not in pulldown:
-                    pulldown[n] = []
-                pulldown[n] += fq
+            mutFound = set([])
+            for (n, pxs) in mutPosIdx.find(rd0[1]):
+                mutFound.add(n)
+                for px in pxs:
+                    mutRes[n][px] = 1 + mutRes[n].get(px, 0)
+            for (n, pxs) in mutPosIdx.find(rd1[1]):
+                mutFound.add(n)
+                for px in pxs:
+                    mutRes[n][px] = 1 + mutRes[n].get(px, 0)
+
+            for n in mutFound:
+                for xs in itm.kmers:
+                    for x in xs:
+                        mutRawRes[n][x] = 1 + mutRawRes[n].get(x, 0)
+
+                if pulldown is not None:
+                    if n not in pulldown:
+                        pulldown[n] = []
+                    pulldown[n] += itm.reads
 
     Q = 10
     nullCdf = pdf2cdf(nullModelPdf(K))
@@ -742,6 +771,19 @@ def main(argv):
     for n in range(V):
         v = hgvsVars[n]['var']
         h = hgvsVars[n]['hgvs']
+
+        if 'hist' in fmt:
+            wtHist = {}
+            for (x,c) in wtRawRes[n].iteritems():
+                wtHist[c] = 1 + wtHist.get(c, 0)
+            for (c,f) in sorted(wtHist.items()):
+                print '%d\twt\t%d\t%d' % (n, c, f)
+
+            mutHist = {}
+            for (x,c) in mutRawRes[n].iteritems():
+                mutHist[c] = 1 + mutHist.get(c, 0)
+            for (c,f) in sorted(mutHist.items()):
+                print '%d\tmut\t%d\t%d' % (n, c, f)
 
         wtSeq = hgvsVars[n]['wtSeq']
         wtHits = nearestPosKmers(K, wtSeq, wtRes[n])
