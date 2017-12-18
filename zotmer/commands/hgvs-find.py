@@ -648,15 +648,15 @@ def findAnchors(K, seq, mx, isLhs):
             for s in ss:
                 res.add((s,p))
                 for t in tt:
-                    print '%s\t%s\t%d' % (render(K, s), render(K, t), debruijn(K, s, t))
                     if debruijn(K, s, t):
                         res.discard((t,p+1))
 
-    res = list(res)
+    if isLhs:
+        l = len(seq) - K
+        res = [(x, l - p) for (x,p) in res]
+    else:
+        res = list(res)
     res.sort()
-
-    for (x,p) in res:
-        print '%d\t%s\t%d' % (p, render(K, x), mx[x])
 
     return res
 
@@ -778,8 +778,10 @@ def main(argv):
 
         mx = kmerHits[n]
 
-        findAnchors(K, itm['lhsFlank'], mx, True)
-        findAnchors(K, itm['rhsFlank'], mx, False)
+        lhs = findAnchors(K, itm['lhsFlank'], mx, True)
+        print 'lhs =', lhs
+        rhs = findAnchors(K, itm['rhsFlank'], mx, False)
+        print 'rhs =', rhs
 
         return
 
@@ -803,60 +805,6 @@ def main(argv):
         hdrs += ['wtD', 'mutD']
         fmts += ['%g', '%g']
         outs += [wtD, mutD]
-
-        if 'pos' in fmt:
-            wtLen = len(wtSeq) - K + 1
-            mutLen = len(mutSeq) - K + 1
-            seqLen = max(wtLen, mutLen)
-            i = 0
-            j = 0
-            for p in range(seqLen):
-                wd = 0
-                wc = 0
-                if i < len(wtHits) and wtHits[i][0] == p:
-                    wd = wtHits[i][1]
-                    if wd == K+1:
-                        wd = 0
-                    wc = wtHits[i][2]
-                    i += 1
-                md = 0
-                mc = 0
-                if j < len(mutHits) and mutHits[j][0] == p:
-                    md = mutHits[j][1]
-                    if md == K+1:
-                        md = 0
-                    mc = mutHits[j][2]
-                    j += 1
-
-                hdrs1 = hdrs + ['pos', 'wtHam', 'wtCnt', 'mutHam', 'mutCnt']
-                fmts1 = fmts + ['%d', '%d', '%d', '%d', '%d']
-                outs1 = outs + [p, wd, wc, md, mc]
-
-                hdrs1 += ['hgvs']
-                fmts1 += ['%s']
-                outs1 += [h]
-
-                if not hdrShown:
-                    hdrShown = True
-                    print '\t'.join(hdrs1)
-                print '\t'.join(fmts1) % tuple(outs1)
-            continue
-
-        if 'ham' in fmt:
-            for j in range(K+1):
-                hdrs1 = hdrs + ['ham', 'wtCnt', 'wtCum', 'mutCnt', 'mutCum', 'nullCum']
-                fmts1 = fmts + ['%d', '%d', '%g', '%d', '%g', '%g']
-                outs1 = outs + [j, wtHs[j], wtCdf[j], mutHs[j], mutCdf[j], nullCdf[j]]
-
-                hdrs1 += ['hgvs']
-                fmts1 += ['%s']
-                outs1 += [h]
-
-                if not hdrShown:
-                    hdrShown = True
-                    print '\t'.join(hdrs1)
-                print '\t'.join(fmts1) % tuple(outs1)
-            continue
 
         hdrs += ['hgvs']
         fmts += ['%s']
