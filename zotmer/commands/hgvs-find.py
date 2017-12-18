@@ -38,12 +38,9 @@ import docopt
 import tqdm
 import yaml
 
-from pykmer.basics import ham, kmer, kmers, kmersList, kmersWithPos, kmersWithPosList, kmersWithPosLists, lcp, murmer, rc, render
+from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, rc, render
 from pykmer.file import openFile, readFasta, readFastq
-from pykmer.misc import unionfind
-from pykmer.sparse import sparse
 from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, ksDistance2, logGammaP, logGammaQ, logLowerGamma
-from zotmer.library.align import glocalAlignment, revComp
 from zotmer.library.debruijn import interpolate
 from zotmer.library.hgvs import makeHGVS, refSeq2Hg19
 from zotmer.library.reads import reads
@@ -96,8 +93,6 @@ def computeBias(K, zs, verbose = False):
             continue
         yc = zs.get(y, 0)
 
-        #xh = murmer(x, 17)
-        #yh = murmer(y, 17)
         if xc > yc:
             a = xc
             b = yc
@@ -423,103 +418,6 @@ def unpackPosKmer(K, v):
     p = v >> (2*K)
     return (x, p)
 
-class PositionalKmerIndex(object):
-    def __init__(self, K):
-        self.K = K
-        self.N = 0
-        self.idx = {}
-
-    def addSeq(self, seq0, seq1 = None):
-        n = self.N
-        self.N += 1
-        for (x,p) in kmersWithPosList(self.K, seq0, False):
-            p -= 1
-            if x not in self.idx:
-                self.idx[x] = []
-            self.idx[x].append((n, p))
-        if seq1 is not None:
-            for (x,p) in kmersWithPosList(self.K, seq1, False):
-                p -= 1
-                if x not in self.idx:
-                    self.idx[x] = []
-                self.idx[x].append((n, p))
-        return n
-
-    def find(self, seq):
-        hits = {}
-        (xs, ys) = kmersWithPosLists(self.K, seq)
-
-        # For each strand compute the putative offset
-        # (if any) of the k-mer on any variants it hits
-        #
-        for (zs, s) in [(xs, True), (ys, False)]:
-            for (x,p) in zs:
-                if x not in self.idx:
-                    continue
-                p -= 1  # revert to 0-based indexing
-                for (n,q) in self.idx[x]:
-                    qp = (q - p, s)
-                    if n not in hits:
-                        hits[n] = {}
-                    if qp not in hits[n]:
-                        hits[n][qp] = 0
-                    hits[n][qp] += 1
-
-        # For each variant with hits, pick the most-voted
-        # offset/strand, keeping equal-most.
-        #
-        cand = {}
-        for (n, ps) in hits.items():
-            for ((p,s),c) in ps.items():
-                if n not in cand:
-                    cand[n] = (c, [(p, s)])
-                elif c > cand[n][0]:
-                    cand[n] = (c, [(p, s)])
-                elif c == cand[n][0]:
-                    cand[n][1].append((p, s))
-
-        res = []
-        for n in cand.keys():
-            (c, pss) = cand[n]
-            for (p0, s) in pss:
-                if s:
-                    zs = [posKmer(self.K, x, p0 + p - 1) for (x,p) in xs]
-                else:
-                    zs = [posKmer(self.K, y, p0 + p - 1) for (y,p) in ys]
-                res.append((n, zs))
-        return res
-
-def nearestPosKmers(K, seq, xps):
-    idx = {}
-    res = {}
-    for (x,p) in kmersWithPosList(K, seq, False):
-        p -= 1
-        idx[p] = x
-        res[p] = [K+1, 0]
-
-    print seq
-    for xp in xps.iterkeys():
-        (x,p) = unpackPosKmer(K, xp)
-        if p not in idx:
-            continue
-        y = idx[p]
-        d = ham(x, y)
-        if d > res[p][0]:
-            continue
-        if d < res[p][0]:
-            res[p] = [d, xps[xp]]
-        else:
-            res[p][1] = max(res[p][1], xps[xp])
-    return sorted([(p, d, c) for (p, (d,c)) in res.items()])
-
-def posKmersToKmers(K, xps):
-    xs = {}
-    for xp in xps.iterkeys():
-        (x,p) = unpackPosKmer(K, xp)
-        c = xps[xp]
-        xs[x] = c + xs.get(x, 0)
-    return xs
-
 def renderPath(K, xs):
     if len(xs) == 0:
         return ''
@@ -527,16 +425,6 @@ def renderPath(K, xs):
     for x in xs[1:]:
         r.append("ACGT"[x&3])
     return ''.join(r)
-
-def subtractFlanks(K, flankKmers, xps):
-    xs = {}
-    for xp in xps.iterkeys():
-        (x,p) = unpackPosKmer(K, xp)
-        if x in flankKmers:
-            continue
-        c = xps[xp]
-        xs[x] = c + xs.get(x, 0)
-    return xs
 
 def makeIndexedVariant(v, K):
     r = {}
@@ -592,7 +480,7 @@ def debruijn(K, x, y):
     M = (1 << 2*(K-1)) - 1
     return (x&M) == (y >> 2)
 
-def findAnchors(K, seq, mx, isLhs):
+def findAnchors(K, seq, mx, isLhs, D):
     xps = kmersWithPosList(K, seq, False)
     xps = [(x, p-1) for (x,p) in xps]
 
@@ -626,7 +514,7 @@ def findAnchors(K, seq, mx, isLhs):
 
         for y in ys:
             d = ham(x, y)
-            if d > 2:
+            if d > D:
                 continue
             zs[p].add(y)
 
@@ -660,6 +548,19 @@ def findAnchors(K, seq, mx, isLhs):
 
     return res
 
+def findAllele(K, mx, lx, lxp, rx, rxp, z):
+    ll = z + lxp + rxp + 1 + K
+    pth = interpolate(K, mx, lx, rx, ll)
+    if pth is None:
+        return None
+    resSeq = renderPath(K, pth)
+    resSeq = resSeq[lxp+K:-(rxp+K)]
+    pthMin = min([mx[x] for x in pth[1:-1]])
+    pthHs = [0 for j in range(K+1)]
+    for x in pth:
+        pthHs[0] += 1
+    return (resSeq, pthMin, pthHs)
+
 class SequenceFactory(object):
     def __init__(self, home):
         self.home = home
@@ -668,10 +569,10 @@ class SequenceFactory(object):
 
     def __getitem__(self, acc):
         if acc != self.prevAcc:
-            if acc not in refSeq2Hg19:
-                print >> sys.stderr, "accession %s not available." % (acc)
-            assert acc in refSeq2Hg19
-            h = refSeq2Hg19[acc]
+            if acc in refSeq2Hg19:
+                h = refSeq2Hg19[acc]
+            else:
+                h = acc
 
             with openFile(self.home + "/" + h + ".fa.gz") as f:
                 for (nm,seq) in readFasta(f):
@@ -756,18 +657,19 @@ def main(argv):
     #for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=True, both=True, verbose=verbose):
         rn += 1
-        for (rd0, rd1) in [itm.reads, itm.reads[::-1]]:
-            hits = set([])
-            for xs in itm.kmers:
-                hits |= findHits(probeIdx, xs)
-            wtFound = set([])
+        hits = set([])
+        for xs in itm.kmers:
+            hits |= findHits(probeIdx, xs)
 
-            for n in hits:
-                for xs in itm.kmers:
-                    for x in xs:
-                        kmerHits[n][x] = 1 + kmerHits[n].get(x, 0)
+        for n in hits:
+            for xs in itm.kmers:
+                for x in xs:
+                    kmerHits[n][x] = 1 + kmerHits[n].get(x, 0)
+
+    D = 4
 
     Q = 10
+
     nullCdf = pdf2cdf(nullModelPdf(K))
 
     hdrShown = False
@@ -778,12 +680,67 @@ def main(argv):
 
         mx = kmerHits[n]
 
-        lhs = findAnchors(K, itm['lhsFlank'], mx, True)
-        print 'lhs =', lhs
-        rhs = findAnchors(K, itm['rhsFlank'], mx, False)
-        print 'rhs =', rhs
+        lhs = findAnchors(K, itm['lhsFlank'], mx, True, D)
+        rhs = findAnchors(K, itm['rhsFlank'], mx, False, D)
 
-        return
+        if len(lhs)*len(rhs) > 10:
+            print >> sys.stderr, 'warning: highly ambiguous anchors for', str(v)
+            print >> sys.stderr, '%d\tlhs anchors, and %d rhs anchors' % (len(lhs), len(rhs))
+
+        wtSeq = itm['wtSeq']
+        wtZ = len(wtSeq)
+
+        mutSeq = itm['mutSeq']
+        mutZ = v.size()
+
+        alleles = {}
+        alleles['wt'] = []
+        alleles['mut'] = []
+        for (lx, lxp) in lhs:
+            for (rx, rxp) in rhs:
+                if wtZ == mutZ:
+                    pthRes =  findAllele(K, mx, lx, lxp, rx, rxp, wtZ)
+                    if pthRes is None:
+                        continue
+                    pthSeq = pthRes[0]
+                    if pthSeq == wtSeq:
+                        alleles['wt'].append(pthRes)
+                        continue
+                    if mutSeq is None:
+                        alleles['mut'].append(pthRes)
+                    elif pthSeq == mutSeq:
+                        alleles['mut'].append(pthRes)
+                else:
+                    pthRes =  findAllele(K, mx, lx, lxp, rx, rxp, wtZ)
+                    if pthRes is not None and pthRes[0] == wtSeq:
+                        alleles['wt'].append(pthRes)
+
+                    pthRes =  findAllele(K, mx, lx, lxp, rx, rxp, mutZ)
+                    if pthRes is None:
+                        continue
+                    pthSeq = pthRes[0]
+                    if mutSeq is None:
+                        alleles['mut'].append(pthRes)
+                    elif pthSeq == mutSeq:
+                        alleles['mut'].append(pthRes)
+
+        wtMin = 0
+        wtHs = [0 for j in range(K+1)]
+        for pthRes in alleles['wt']:
+            if pthRes[1] >= wtMin:
+                wtMin = pthRes[1]
+                wtHs = pthRes[2]
+        wtCdf = counts2cdf(wtHs)
+        wtD = ksDistance2(wtCdf, nullCdf)[0]
+
+        mutMin = 0
+        mutHs = [0 for j in range(K+1)]
+        for pthRes in alleles['mut']:
+            if pthRes[1] >= mutMin:
+                mutMin = pthRes[1]
+                mutHs = pthRes[2]
+        mutCdf = counts2cdf(mutHs)
+        mutD = ksDistance2(mutCdf, nullCdf)[0]
 
         hdrs = ['n']
         fmts = ['%d']
