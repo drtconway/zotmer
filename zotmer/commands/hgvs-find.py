@@ -38,9 +38,9 @@ import docopt
 import tqdm
 import yaml
 
-from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, rc, render
+from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
-from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, ksDistance2, logGammaP, logGammaQ, logLowerGamma
+from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
 from zotmer.library.debruijn import interpolate
 from zotmer.library.hgvs import makeHGVS, refSeq2Hg19
 from zotmer.library.reads import reads
@@ -111,6 +111,9 @@ def computeBias(K, zs, verbose = False):
 
 def nullModelPdf(K):
     return [math.exp(logBinEq(0.25, K, j)) for j in range(K+1)]
+
+def binLe(p, N, k):
+    return math.exp(logBinLe(p, N, k))
 
 def mkRnks(xs):
     zs = {}
@@ -426,6 +429,22 @@ def renderPath(K, xs):
         r.append("ACGT"[x&3])
     return ''.join(r)
 
+def scoreAllele(K, pthRes, lhs, seq, rhs):
+    pth = pthRes[2]
+
+    r = [0 for i in range(K+1)]
+
+    if seq is None:
+        r[0] += len(pth)
+        return r
+
+    xs = kmersList(K, lhs[-(K+pthRes[3]-1):] + seq + rhs[:(K+pthRes[4]-1)])
+
+    for d in [ham(x,y) for (x,y) in zip(pth, xs)]:
+        r[d] += 1
+
+    return r
+
 def makeIndexedVariant(v, K):
     r = {}
     r['hgvs'] = str(v)
@@ -469,12 +488,23 @@ def addProbesToIdx(n, xs, idx):
             idx[x] = set([])
         idx[x].add(n)
 
-def findHits(idx, xs):
-    r = set([])
-    e = set([])
+def makeMetaIdx(idx):
+    top = {}
+    bot = {}
+    for (x, ys) in idx.iteritems():
+        h = 17
+        for y in sorted(ys):
+            h = murmer(y, h)
+        top[x] = h
+        bot[h] = ys
+    return (top, bot)
+
+def findHits(idx, xs, rx):
     for x in xs:
-        r |= idx.get(x, e)
-    return r
+        if x in idx:
+            v = idx[x]
+            if len(rx) == 0 or rx[-1] != v:
+                rx.append(v)
 
 def debruijn(K, x, y):
     M = (1 << 2*(K-1)) - 1
@@ -555,11 +585,8 @@ def findAllele(K, mx, lx, lxp, rx, rxp, z):
         return None
     resSeq = renderPath(K, pth)
     resSeq = resSeq[lxp+K:-(rxp+K)]
-    pthMin = min([mx[x] for x in pth[1:-1]])
-    pthHs = [0 for j in range(K+1)]
-    for x in pth:
-        pthHs[0] += 1
-    return (resSeq, pthMin, pthHs)
+    pthMin = min([mx[x] for x in pth[(lxp+1):-(rxp+1)]])
+    return (resSeq, pthMin, pth[(lxp+1):-(rxp+1)], lxp, rxp)
 
 class SequenceFactory(object):
     def __init__(self, home):
@@ -644,6 +671,8 @@ def main(argv):
         probes = set(kmersList(K, itm['lhsFlank'], True) + kmersList(K, itm['rhsFlank'], True))
         addProbesToIdx(n, probes, probeIdx)
 
+    (probeHashes, hashSets) = makeMetaIdx(probeIdx)
+
     if verbose:
         print >> sys.stderr, "done."
 
@@ -657,11 +686,19 @@ def main(argv):
     #for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=True, both=True, verbose=verbose):
         rn += 1
-        hits = set([])
+        probeHits = []
         for xs in itm.kmers:
-            hits |= findHits(probeIdx, xs)
+            findHits(probeHashes, xs, probeHits)
+            rn = -rn
 
-        for n in hits:
+        if len(probeHits) == 0:
+            continue
+
+        setHits = set([])
+        for h in set(probeHits):
+            setHits |= hashSets[h]
+
+        for n in setHits:
             for xs in itm.kmers:
                 for x in xs:
                     kmerHits[n][x] = 1 + kmerHits[n].get(x, 0)
@@ -672,6 +709,8 @@ def main(argv):
 
     nullCdf = pdf2cdf(nullModelPdf(K))
 
+    ps = [1-binLe(0.25, K, d) for d in range(K+1)]
+
     hdrShown = False
     for n in range(V):
         itm = hgvsVars[n]
@@ -680,8 +719,11 @@ def main(argv):
 
         mx = kmerHits[n]
 
-        lhs = findAnchors(K, itm['lhsFlank'], mx, True, D)
-        rhs = findAnchors(K, itm['rhsFlank'], mx, False, D)
+        lhsFlank = itm['lhsFlank']
+        rhsFlank = itm['rhsFlank']
+
+        lhs = findAnchors(K, lhsFlank, mx, True, D)
+        rhs = findAnchors(K, rhsFlank, mx, False, D)
 
         if len(lhs)*len(rhs) > 10:
             print >> sys.stderr, 'warning: highly ambiguous anchors for', str(v)
@@ -727,27 +769,37 @@ def main(argv):
         wtMin = 0
         wtHs = [0 for j in range(K+1)]
         for pthRes in alleles['wt']:
+            wtA =  scoreAllele(K, pthRes, lhsFlank, wtSeq, rhsFlank)
             if pthRes[1] >= wtMin:
                 wtMin = pthRes[1]
-                wtHs = pthRes[2]
+                wtHs = wtA
         wtCdf = counts2cdf(wtHs)
         wtD = ksDistance2(wtCdf, nullCdf)[0]
+        wtQ = 1
+        for d in range(K+1):
+            wtQ *= math.pow(ps[d], wtHs[d])
+        wtQ = 1 - wtQ
 
         mutMin = 0
         mutHs = [0 for j in range(K+1)]
         for pthRes in alleles['mut']:
+            mutA =  scoreAllele(K, pthRes, lhsFlank, mutSeq, rhsFlank)
             if pthRes[1] >= mutMin:
                 mutMin = pthRes[1]
-                mutHs = pthRes[2]
+                mutHs = mutA
         mutCdf = counts2cdf(mutHs)
         mutD = ksDistance2(mutCdf, nullCdf)[0]
+        mutQ = 1
+        for d in range(K+1):
+            mutQ *= math.pow(ps[d], mutHs[d])
+        mutQ = 1 - mutQ
 
         hdrs = ['n']
         fmts = ['%d']
         outs = [n]
 
-        wtAllele = ((wtMin > Q) and (wtD > 0.8))
-        mutAllele = ((mutMin > Q) and (mutD > 0.8))
+        wtAllele = ((wtMin > Q) and (wtQ < 0.05))
+        mutAllele = ((mutMin > Q) and (mutQ < 0.05))
         resV =  1*wtAllele + 2*mutAllele
         res = ['null', 'wt', 'mut', 'wt/mut'][resV]
 
@@ -762,6 +814,10 @@ def main(argv):
         hdrs += ['wtD', 'mutD']
         fmts += ['%g', '%g']
         outs += [wtD, mutD]
+
+        hdrs += ['wtQ', 'mutQ']
+        fmts += ['%g', '%g']
+        outs += [wtQ, mutQ]
 
         hdrs += ['hgvs']
         fmts += ['%s']
