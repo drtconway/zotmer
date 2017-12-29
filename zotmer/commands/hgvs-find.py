@@ -9,6 +9,7 @@ Options:
     -X              index HGVS variants
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.001]
     -B BINFUNC      binning function to use [default: none]
+    -c FILENAME     capture reads into named zipfile
     -S SCALE        scaling factor for binning function [default: 1.0]
     -f FILENAME     read variants from a file
     -F FORMAT       a format string for printing results [default: ks]
@@ -41,11 +42,10 @@ import yaml
 from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
-from zotmer.library.debruijn import interpolate
+from zotmer.library.capture import capture
+from zotmer.library.debruijn import paths # interpolate
 from zotmer.library.hgvs import makeHGVS, refSeq2Hg19
 from zotmer.library.reads import reads
-
-AluY = 'GGCCAGGAGTGGTGGCTCAGCCTATAATCCCAGCACTTTGGGAGGCTGAGGCAGGCAGATCACGAGGTCAGGAGATCGAGACCACCCTGGCTAACATGGTGAAACCCTGTCTCCACTAAAAATAGAAAAAAATTAGCATGGTGTGGTGGCATGCACCTGTAGTCCCAGCTGTTAGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCAGAGAGGCAGAGATTGCAGTGAGCCAAGATCGTGCCACTGCACTCCAGCCAGGGCGACAGAGTGAGACTCCGTCTAAA'
 
 def sqr(x):
     return x*x
@@ -154,6 +154,16 @@ def mannWhitney(xs, ys):
     #py = 0.5*math.erfc(zy/math.sqrt(2))
 
     return (ux, zx, px)
+
+def hamming(p, q):
+    i = 0
+    z = len(p)
+    d = 0
+    while i < z:
+        if p[i] != q[i] and p[i] != 'N' and q[i] != 'N':
+            d += 1
+        i += 1
+    return d
 
 def hist(xs):
     r = {}
@@ -429,22 +439,6 @@ def renderPath(K, xs):
         r.append("ACGT"[x&3])
     return ''.join(r)
 
-def scoreAllele(K, pthRes, lhs, seq, rhs):
-    pth = pthRes[2]
-
-    r = [0 for i in range(K+1)]
-
-    if seq is None:
-        r[0] += len(pth)
-        return r
-
-    xs = kmersList(K, lhs[-(K+pthRes[3]-1):] + seq + rhs[:(K+pthRes[4]-1)])
-
-    for d in [ham(x,y) for (x,y) in zip(pth, xs)]:
-        r[d] += 1
-
-    return r
-
 def makeIndexedVariant(v, K):
     r = {}
     r['hgvs'] = str(v)
@@ -452,17 +446,17 @@ def makeIndexedVariant(v, K):
     big = v.loadAccession()
     lhsSt = rng[0] - 2*K
     lhsEn = rng[0]
-    lhs = big[lhsSt:lhsEn]
+    lhs = big[lhsSt:lhsEn].upper()
     rhsSt = rng[1]
     rhsEn = rng[1] + 2*K
-    rhs = big[rhsSt:rhsEn]
+    rhs = big[rhsSt:rhsEn].upper()
     r['lhsFlank'] = lhs
     r['rhsFlank'] = rhs
-    r['wtSeq'] = big[rng[0]:rng[1]]
+    r['wtSeq'] = big[rng[0]:rng[1]].upper()
     if v.anonymous() or v.cryptic():
         r['mutSeq'] = None
     else:
-        r['mutSeq'] = v.sequence()
+        r['mutSeq'] = v.sequence().upper()
 
     return r
 
@@ -481,30 +475,6 @@ def checkVariant(v, K):
         print >> sys.stderr, mutSeq
         return False
     return True
-
-def addProbesToIdx(n, xs, idx):
-    for x in xs:
-        if x not in idx:
-            idx[x] = set([])
-        idx[x].add(n)
-
-def makeMetaIdx(idx):
-    top = {}
-    bot = {}
-    for (x, ys) in idx.iteritems():
-        h = 17
-        for y in sorted(ys):
-            h = murmer(y, h)
-        top[x] = h
-        bot[h] = ys
-    return (top, bot)
-
-def findHits(idx, xs, rx):
-    for x in xs:
-        if x in idx:
-            v = idx[x]
-            if len(rx) == 0 or rx[-1] != v:
-                rx.append(v)
 
 def debruijn(K, x, y):
     M = (1 << 2*(K-1)) - 1
@@ -578,15 +548,71 @@ def findAnchors(K, seq, mx, isLhs, D):
 
     return res
 
+def consAllele(lhs, mid, rhs, lp, rp):
+    if mid is None:
+        return None
+    return lhs[-lp:] + mid + rhs[:rp]
+
+def findSimpleAllele(K, lhs, mid, rhs, mx):
+    allele = consAllele(lhs, mid, rhs, K-1, K-1)
+    xs = kmersList(K, allele)
+    m = min([mx.get(x, 0) for x in xs])
+    res = {}
+    res['allele'] = mid
+    res['covMin'] = m
+    res['path'] = xs
+    res['lhsPos'] = 0
+    res['rhsPos'] = 0
+    return res
+
 def findAllele(K, mx, lx, lxp, rx, rxp, z):
     ll = z + lxp + rxp + 1 + K
-    pth = interpolate(K, mx, lx, rx, ll)
-    if pth is None:
-        return None
-    resSeq = renderPath(K, pth)
-    resSeq = resSeq[lxp+K:-(rxp+K)]
-    pthMin = min([mx[x] for x in pth[(lxp+1):-(rxp+1)]])
-    return (resSeq, pthMin, pth[(lxp+1):-(rxp+1)], lxp, rxp)
+    #pth = interpolate(K, mx, lx, rx, ll)
+    for pth in paths(K, mx, lx, rx, ll):
+        seq = renderPath(K, pth)
+        seq = seq[lxp+K:-(rxp+K)]
+        res = {}
+        res['ancPath'] = pth
+        res['allele'] = seq
+        res['covMin'] = min([mx[x] for x in pth[(lxp+1):-(rxp+1)]])
+        res['path'] = pth[1:-1]
+        res['lhsPos'] = lxp
+        res['rhsPos'] = rxp
+        yield res
+
+class Scorer(object):
+    def __init__(self, K):
+        self.K = K
+        self.nullCdf = pdf2cdf(nullModelPdf(K))
+        self.binModel =  [1-binLe(0.25, K, d) for d in range(K+1)]
+
+    def score(self, res, lhs, seq, rhs):
+        Km1 = self.K - 1
+        Kp1 = self.K + 1
+
+        xs = res['path']
+
+        r = [0 for i in range(Kp1)]
+
+        if seq is None:
+            n = len(res['allele'])
+            allele = consAllele(lhs, n*'N', rhs, Km1+res['lhsPos'], Km1+res['rhsPos'])
+            r[0] += len(xs)
+        else:
+            allele = consAllele(lhs, seq, rhs, Km1+res['lhsPos'], Km1+res['rhsPos'])
+            ys = kmersList(self.K, allele)
+            for d in [ham(x,y) for (x,y) in zip(xs, ys)]:
+                r[d] += 1
+
+        res['hammingProfile'] = r
+        res['hammingCdf'] = counts2cdf(r)
+        res['ksDist'] = ksDistance2(res['hammingCdf'], self.nullCdf)[0]
+        res['hamming'] = hamming(allele, renderPath(self.K, xs))
+
+        p = 1.0
+        for d in xrange(Kp1):
+            p *= math.pow(self.binModel[d], r[d])
+        res['binom'] = 1.0 - p
 
 class SequenceFactory(object):
     def __init__(self, home):
@@ -651,6 +677,12 @@ def main(argv):
 
         return
 
+    capt = False
+    zipname = None
+    if opts['-c']:
+        capt = True
+        zipname = opts['-c']
+
     fmt = set(opts['-F'].split(','))
 
     if verbose:
@@ -661,17 +693,16 @@ def main(argv):
 
     V = len(hgvsVars)
 
-    probeIdx = {}
+    cap = capture(K, reads=capt, kmers=True, verbose=verbose)
 
     for n in range(V):
         itm = hgvsVars[n]
         h = itm['hgvs']
         v = makeHGVS(h)
         itm['var'] = v
-        probes = set(kmersList(K, itm['lhsFlank'], True) + kmersList(K, itm['rhsFlank'], True))
-        addProbesToIdx(n, probes, probeIdx)
-
-    (probeHashes, hashSets) = makeMetaIdx(probeIdx)
+        bait = itm['lhsFlank'] + 'N' + itm['rhsFlank']
+        n0 = cap.addBait(h, bait)
+        assert n0 == n
 
     if verbose:
         print >> sys.stderr, "done."
@@ -680,36 +711,19 @@ def main(argv):
     if opts['-s']:
         combineStrands = False
 
-    kmerHits = [{} for n in range(V)]
-
     rn = 0
-    #for itm in reads(opts['<input>'], K=K, paired=False, reads=True, kmers=True, both=True, verbose=verbose):
-    for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=True, both=True, verbose=verbose):
+    for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, both=True, verbose=verbose):
         rn += 1
-        probeHits = []
-        for xs in itm.kmers:
-            findHits(probeHashes, xs, probeHits)
-            rn = -rn
+        cap.addReadPairAndKmers(itm.reads[0], itm.reads[1])
 
-        if len(probeHits) == 0:
-            continue
-
-        setHits = set([])
-        for h in set(probeHits):
-            setHits |= hashSets[h]
-
-        for n in setHits:
-            for xs in itm.kmers:
-                for x in xs:
-                    kmerHits[n][x] = 1 + kmerHits[n].get(x, 0)
+    if capt:
+        cap.saveReads(zipname)
 
     D = 4
 
     Q = 10
 
-    nullCdf = pdf2cdf(nullModelPdf(K))
-
-    ps = [1-binLe(0.25, K, d) for d in range(K+1)]
+    scorer = Scorer(K)
 
     hdrShown = False
     for n in range(V):
@@ -717,10 +731,29 @@ def main(argv):
         v = itm['var']
         h = itm['hgvs']
 
-        mx = kmerHits[n]
+        mx = cap.capKmers[n]
 
         lhsFlank = itm['lhsFlank']
         rhsFlank = itm['rhsFlank']
+
+        alleles = {}
+        alleles['wt'] = []
+        alleles['mut'] = []
+
+        wtSeq = itm['wtSeq']
+        wtZ = len(wtSeq)
+
+        mutSeq = itm['mutSeq']
+        mutZ = v.size()
+
+        if False:
+            ax = findSimpleAllele(K, lhsFlank, wtSeq, rhsFlank, mx)
+            if ax is not None:
+                alleles['wt'].append(ax)
+            if mutSeq is not None:
+                ax = findSimpleAllele(K, lhsFlank, mutSeq, rhsFlank, mx)
+                if ax is not None:
+                    alleles['mut'].append(ax)
 
         lhs = findAnchors(K, lhsFlank, mx, True, D)
         rhs = findAnchors(K, rhsFlank, mx, False, D)
@@ -729,78 +762,61 @@ def main(argv):
             print >> sys.stderr, 'warning: highly ambiguous anchors for', str(v)
             print >> sys.stderr, '%d\tlhs anchors, and %d rhs anchors' % (len(lhs), len(rhs))
 
-        wtSeq = itm['wtSeq']
-        wtZ = len(wtSeq)
-
-        mutSeq = itm['mutSeq']
-        mutZ = v.size()
-
-        alleles = {}
-        alleles['wt'] = []
-        alleles['mut'] = []
         for (lx, lxp) in lhs:
             for (rx, rxp) in rhs:
                 if wtZ == mutZ:
-                    pthRes =  findAllele(K, mx, lx, lxp, rx, rxp, wtZ)
-                    if pthRes is None:
-                        continue
-                    pthSeq = pthRes[0]
-                    if pthSeq == wtSeq:
-                        alleles['wt'].append(pthRes)
-                        continue
-                    if mutSeq is None:
-                        alleles['mut'].append(pthRes)
-                    elif pthSeq == mutSeq:
-                        alleles['mut'].append(pthRes)
+                    for pthRes in findAllele(K, mx, lx, lxp, rx, rxp, wtZ):
+                        pthSeq = pthRes['allele']
+                        if pthSeq == wtSeq:
+                            alleles['wt'].append(pthRes)
+                            continue
+                        if mutSeq is None:
+                            alleles['mut'].append(pthRes)
+                        elif pthSeq == mutSeq:
+                            alleles['mut'].append(pthRes)
                 else:
-                    pthRes =  findAllele(K, mx, lx, lxp, rx, rxp, wtZ)
-                    if pthRes is not None and pthRes[0] == wtSeq:
-                        alleles['wt'].append(pthRes)
+                    #pthRes = findAllele(K, mx, lx, lxp, rx, rxp, wtZ)
+                    for pthRes in findAllele(K, mx, lx, lxp, rx, rxp, wtZ):
+                        if pthRes['allele'] == wtSeq:
+                            alleles['wt'].append(pthRes)
 
-                    pthRes =  findAllele(K, mx, lx, lxp, rx, rxp, mutZ)
-                    if pthRes is None:
-                        continue
-                    pthSeq = pthRes[0]
-                    if mutSeq is None:
-                        alleles['mut'].append(pthRes)
-                    elif pthSeq == mutSeq:
-                        alleles['mut'].append(pthRes)
+                    # pthRes = findAllele(K, mx, lx, lxp, rx, rxp, mutZ)
+                    for pthRes in findAllele(K, mx, lx, lxp, rx, rxp, mutZ):
+                        pthSeq = pthRes['allele']
+                        if mutSeq is None:
+                            alleles['mut'].append(pthRes)
+                        elif pthSeq == mutSeq:
+                            alleles['mut'].append(pthRes)
 
-        wtMin = 0
-        wtHs = [0 for j in range(K+1)]
+        wtRes = {}
+        wtRes['covMin'] = 0
+        wtRes['binom'] = 1.0
+        wtRes['ksDist'] = 0.0
+        wtRes['hamming'] = 0
         for pthRes in alleles['wt']:
-            wtA =  scoreAllele(K, pthRes, lhsFlank, wtSeq, rhsFlank)
-            if pthRes[1] >= wtMin:
-                wtMin = pthRes[1]
-                wtHs = wtA
-        wtCdf = counts2cdf(wtHs)
-        wtD = ksDistance2(wtCdf, nullCdf)[0]
-        wtQ = 1
-        for d in range(K+1):
-            wtQ *= math.pow(ps[d], wtHs[d])
-        wtQ = 1 - wtQ
+            scorer.score(pthRes, lhsFlank, wtSeq, rhsFlank)
+            if pthRes['covMin'] >= wtRes['covMin']:
+                wtRes = pthRes
 
-        mutMin = 0
-        mutHs = [0 for j in range(K+1)]
+        mutRes = {}
+        mutRes['covMin'] = 0
+        mutRes['binom'] = 1.0
+        mutRes['ksDist'] = 0.0
+        mutRes['hamming'] = 0
         for pthRes in alleles['mut']:
-            mutA =  scoreAllele(K, pthRes, lhsFlank, mutSeq, rhsFlank)
-            if pthRes[1] >= mutMin:
-                mutMin = pthRes[1]
-                mutHs = mutA
-        mutCdf = counts2cdf(mutHs)
-        mutD = ksDistance2(mutCdf, nullCdf)[0]
-        mutQ = 1
-        for d in range(K+1):
-            mutQ *= math.pow(ps[d], mutHs[d])
-        mutQ = 1 - mutQ
+            scorer.score(pthRes, lhsFlank, mutSeq, rhsFlank)
+            if pthRes['covMin'] >= mutRes['covMin']:
+                mutRes = pthRes
 
         hdrs = ['n']
         fmts = ['%d']
         outs = [n]
 
-        wtAllele = ((wtMin > Q) and (wtQ < 0.05))
-        mutAllele = ((mutMin > Q) and (mutQ < 0.05))
-        resV =  1*wtAllele + 2*mutAllele
+        #wtAllele = ((wtRes['covMin'] > Q) and (wtRes['binom'] < 0.05))
+        #mutAllele = ((mutRes['covMin'] > Q) and (mutRes['binom'] < 0.05))
+        wtAllele = ((wtRes['covMin'] > Q) and (wtRes['hamming'] < 4))
+        mutAllele = ((mutRes['covMin'] > Q) and (mutRes['hamming'] < 4))
+        resV = 1*wtAllele + 2*mutAllele
         res = ['null', 'wt', 'mut', 'wt/mut'][resV]
 
         hdrs += ['res']
@@ -809,15 +825,19 @@ def main(argv):
 
         hdrs += ['wtMin', 'mutMin']
         fmts += ['%d', '%d']
-        outs += [wtMin, mutMin]
+        outs += [wtRes['covMin'], mutRes['covMin']]
 
         hdrs += ['wtD', 'mutD']
         fmts += ['%g', '%g']
-        outs += [wtD, mutD]
+        outs += [wtRes['ksDist'], mutRes['ksDist']]
 
         hdrs += ['wtQ', 'mutQ']
         fmts += ['%g', '%g']
-        outs += [wtQ, mutQ]
+        outs += [wtRes['binom'], mutRes['binom']]
+
+        hdrs += ['wtHam', 'mutHam']
+        fmts += ['%d', '%d']
+        outs += [wtRes['hamming'], mutRes['hamming']]
 
         hdrs += ['hgvs']
         fmts += ['%s']

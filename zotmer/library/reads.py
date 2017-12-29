@@ -44,7 +44,7 @@ class reads(object):
         self.both = kwargs.get('both', False)
         self.verbose =  kwargs.get('verbose', False)
 
-        assert sum([self.fwdOnly, self.separate, self.both]) == 1
+        assert not self.kmers or sum([self.fwdOnly, self.separate, self.both]) == 1
 
         self.N = 1 + (self.paired)
         self.currFilesInd = None
