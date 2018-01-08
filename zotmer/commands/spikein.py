@@ -342,11 +342,11 @@ def main(argv):
                     print >> out2, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s] + e2)
                     print >> out2, r2
                 else:
-                    print >> out1, '@' + ' '.join([c, str(zb), str(ze), nm, str(rp1), str(fl), s] + e1)
+                    print >> out1, '@%s:%d-%d %s %d %d %s %s' % (c, zb, ze, nm, rp1, fl, s, ';'.join(e1))
                     print >> out1, r1
                     print >> out1, '+'
                     print >> out1, quals
-                    print >> out2, '@' + ' '.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s] + e2)
+                    print >> out2, '@%s:%d-%d %s %d %d %s %s' % (c, zb, ze, nm, rp2, fl, s, ';'.join(e2))
                     print >> out2, r2
                     print >> out2, '+'
                     print >> out2, quals

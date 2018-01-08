@@ -6,6 +6,7 @@ Usage:
     zot hgvs-find [options] <index> <input>...
 
 Options:
+    -T BEDFILE      test regions at indexing time
     -X              index HGVS variants
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.001]
     -B BINFUNC      binning function to use [default: none]
@@ -44,7 +45,7 @@ from pykmer.file import openFile, readFasta, readFastq
 from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
 from zotmer.library.capture import capture
 from zotmer.library.debruijn import paths # interpolate
-from zotmer.library.hgvs import makeHGVS, refSeq2Hg19
+from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19
 from zotmer.library.reads import reads
 
 def sqr(x):
@@ -422,6 +423,29 @@ def chiSquaredPval(x, n, lowerTail=True, logP=False):
     else:
         return math.exp(lp)
 
+def readBED(f):
+    res = {}
+    first = True
+    for l in f:
+        t = l.split()
+        if first:
+            first = False
+            if t[0] == 'track' or t[0] =='browser':
+                continue
+        c = t[0]
+        if c in hg19ToRefSeq:
+            c = hg19ToRefSeq[c]
+        s = int(t[1])
+        e = int(t[2])
+        n = None
+        if len(t) > 3:
+            n = t[3]
+        v = (s, e, n)
+        if c not in res:
+            res[c] = []
+        res[c].append(v)
+    return res
+
 def posKmer(K, x, p):
     return x | (p << (2*K))
 
@@ -459,22 +483,6 @@ def makeIndexedVariant(v, K):
         r['mutSeq'] = v.sequence().upper()
 
     return r
-
-def checkVariant(v, K):
-    (wtSeq, mutSeq) = v.context(K)
-
-    # A regular variant
-    wtXs = set(kmers(K, wtSeq, False))
-    mutXs = set(kmers(K, mutSeq, False))
-    com = wtXs & mutXs
-    wtXs -= com
-    mutXs -= com
-    if len(wtXs) == 0 or len(mutXs) == 0:
-        print >> sys.stderr, "variant has no distinguishing k-mers: %s" % (str(v),)
-        print >> sys.stderr, wtSeq
-        print >> sys.stderr, mutSeq
-        return False
-    return True
 
 def debruijn(K, x, y):
     M = (1 << 2*(K-1)) - 1
@@ -614,6 +622,71 @@ class Scorer(object):
             p *= math.pow(self.binModel[d], r[d])
         res['binom'] = 1.0 - p
 
+def isBetter(lhs, rhs):
+    if lhs['covMin'] < rhs['covMin']:
+        return False
+    if lhs['covMin'] > rhs['covMin']:
+        return True
+    if lhs['hamming'] > rhs['hamming']:
+        return False
+    return True
+
+def cat(xss):
+    for xs in xss:
+        for x in xs:
+            yield x
+
+class AlleleFinder(object):
+    def __init__(self, K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ):
+        self.K = K
+        self.D = D
+        self.v = v
+        self.mx = mx
+        self.lhsFlank = lhsFlank
+        self.rhsFlank = rhsFlank
+        self.wtSeq = wtSeq
+        self.mutSeq = mutSeq
+        self.wtZ = wtZ
+        self.mutZ = mutZ
+
+    def simpleAlleles(self):
+        ax = findSimpleAllele(self.K, self.lhsFlank, self.wtSeq, self.rhsFlank, self.mx)
+        if ax is not None:
+            yield ('wt', ax)
+        if self.mutSeq is not None:
+            ax = findSimpleAllele(self.K, self.lhsFlank, self.mutSeq, self.rhsFlank, self.mx)
+            if ax is not None:
+                yield ('mut', ax)
+
+    def bridgingAlleles(self):
+        lhs = findAnchors(self.K, self.lhsFlank, self.mx, True, self.D)
+        rhs = findAnchors(self.K, self.rhsFlank, self.mx, False, self.D)
+
+        if len(lhs)*len(rhs) > 10:
+            print >> sys.stderr, 'warning: highly ambiguous anchors for', str(self.v)
+            print >> sys.stderr, '%d\tlhs anchors, and %d rhs anchors' % (len(lhs), len(rhs))
+
+        for (lx, lxp) in lhs:
+            for (rx, rxp) in rhs:
+                if self.wtZ == self.mutZ:
+                    for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.wtZ):
+                        pthSeq = pthRes['allele']
+                        if pthSeq == self.wtSeq:
+                            yield ('wt', pthRes)
+                            continue
+                        if self.mutSeq is None or pthSeq == self.mutSeq:
+                            yield ('mut', pthRes)
+                else:
+                    for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.wtZ):
+                        pthSeq = pthRes['allele']
+                        if pthSeq == self.wtSeq:
+                            yield ('wt', pthRes)
+
+                    for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.mutZ):
+                        pthSeq = pthRes['allele']
+                        if self.mutSeq is None or pthSeq == self.mutSeq:
+                            yield ('mut', pthRes)
+
 class SequenceFactory(object):
     def __init__(self, home):
         self.home = home
@@ -637,9 +710,13 @@ class SequenceFactory(object):
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
+    verbose = opts['-v']
+
     K = int(opts['-k'])
 
-    verbose = opts['-v']
+    D = 4
+
+    Q = 10
 
     d = "."
     if opts['-g']:
@@ -667,7 +744,6 @@ def main(argv):
         rs = []
         for (acc, vs) in vx.iteritems():
             for v in vs:
-                checkVariant(v, K)
                 r = makeIndexedVariant(v, K)
                 if r is not None:
                     rs.append(r)
@@ -719,11 +795,27 @@ def main(argv):
     if capt:
         cap.saveReads(zipname)
 
-    D = 4
-
-    Q = 10
-
     scorer = Scorer(K)
+
+    globHist = {}
+
+    for n in range(V):
+        mx = cap.capKmers[n]
+        for c in mx.itervalues():
+            if c < Q:
+                continue
+            if c not in globHist:
+                globHist[c] = 0
+            globHist[c] += 1
+
+    #globCounts = sorted(globHist.keys())
+    #globT = float(sum(globHist.values()))
+    #globCdf = []
+    #rt = 0
+    #for c in globCounts:
+    #    f = globHist[c]
+    #    rt += f
+    #    globCdf.append(float(rt)/globT)
 
     hdrShown = False
     for n in range(V):
@@ -732,6 +824,30 @@ def main(argv):
         h = itm['hgvs']
 
         mx = cap.capKmers[n]
+
+        #vHist = {}
+        #for c in mx.itervalues():
+        #    if c < Q:
+        #        continue
+        #    if c not in vHist:
+        #        vHist[c] = 0
+        #    vHist[c] += 1
+        #vT = float(sum(vHist.values()))
+        #vCdf = []
+        #rt = 0
+        #for c in globCounts:
+        #    f = vHist.get(c, 0)
+        #    rt += f
+        #    vCdf.append(float(rt)/vT)
+        #(vd0, vd1) = ksDistance2(vCdf, globCdf)
+        #if False:
+        #    for (c, g, x) in zip(globCounts, globCdf, vCdf):
+        #        print '%d\t%d\t%d\t%d\t%g\t%g' % (n, c, globHist[c], vHist.get(c, 0), g, x)
+        #    continue
+
+        if 'kmers' in fmt:
+            for (x,c) in mx.iteritems():
+                print '%s\t%d' % (render(K, x), c)
 
         lhsFlank = itm['lhsFlank']
         rhsFlank = itm['rhsFlank']
@@ -746,47 +862,24 @@ def main(argv):
         mutSeq = itm['mutSeq']
         mutZ = v.size()
 
-        if False:
-            ax = findSimpleAllele(K, lhsFlank, wtSeq, rhsFlank, mx)
-            if ax is not None:
-                alleles['wt'].append(ax)
-            if mutSeq is not None:
-                ax = findSimpleAllele(K, lhsFlank, mutSeq, rhsFlank, mx)
-                if ax is not None:
-                    alleles['mut'].append(ax)
-
-        lhs = findAnchors(K, lhsFlank, mx, True, D)
-        rhs = findAnchors(K, rhsFlank, mx, False, D)
-
-        if len(lhs)*len(rhs) > 10:
-            print >> sys.stderr, 'warning: highly ambiguous anchors for', str(v)
-            print >> sys.stderr, '%d\tlhs anchors, and %d rhs anchors' % (len(lhs), len(rhs))
-
-        for (lx, lxp) in lhs:
-            for (rx, rxp) in rhs:
-                if wtZ == mutZ:
-                    for pthRes in findAllele(K, mx, lx, lxp, rx, rxp, wtZ):
-                        pthSeq = pthRes['allele']
-                        if pthSeq == wtSeq:
-                            alleles['wt'].append(pthRes)
-                            continue
-                        if mutSeq is None:
-                            alleles['mut'].append(pthRes)
-                        elif pthSeq == mutSeq:
-                            alleles['mut'].append(pthRes)
-                else:
-                    #pthRes = findAllele(K, mx, lx, lxp, rx, rxp, wtZ)
-                    for pthRes in findAllele(K, mx, lx, lxp, rx, rxp, wtZ):
-                        if pthRes['allele'] == wtSeq:
-                            alleles['wt'].append(pthRes)
-
-                    # pthRes = findAllele(K, mx, lx, lxp, rx, rxp, mutZ)
-                    for pthRes in findAllele(K, mx, lx, lxp, rx, rxp, mutZ):
-                        pthSeq = pthRes['allele']
-                        if mutSeq is None:
-                            alleles['mut'].append(pthRes)
-                        elif pthSeq == mutSeq:
-                            alleles['mut'].append(pthRes)
+        af = AlleleFinder(K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ)
+        j = 0
+        for (t, a) in cat([af.simpleAlleles(), af.bridgingAlleles()]):
+            assert t == 'wt' or t == 'mut'
+            alleles[t].append(a)
+            if 'path' in fmt:
+                for x in a['path']:
+                    c = mx.get(x, 0)
+                    print '%d\t%d\t%s\t%s\t%d' % (n, j, t, render(K, x), c)
+                print '%d\t%d\t%s\t%s' % (n, j, t, renderPath(K, a['path']))
+            if 'cov' in fmt:
+                hh = {}
+                for x in a['path']:
+                    c = mx.get(x, 0)
+                    hh[c] = 1 + hh.get(c, 0)
+                for (c,f) in sorted(hh.items()):
+                    print '%d\t%d\t%s\t%d\t%d' % (n, j, t, c, f)
+            j += 1
 
         wtRes = {}
         wtRes['covMin'] = 0
@@ -795,7 +888,7 @@ def main(argv):
         wtRes['hamming'] = 0
         for pthRes in alleles['wt']:
             scorer.score(pthRes, lhsFlank, wtSeq, rhsFlank)
-            if pthRes['covMin'] >= wtRes['covMin']:
+            if isBetter(pthRes, wtRes):
                 wtRes = pthRes
 
         mutRes = {}
@@ -805,15 +898,13 @@ def main(argv):
         mutRes['hamming'] = 0
         for pthRes in alleles['mut']:
             scorer.score(pthRes, lhsFlank, mutSeq, rhsFlank)
-            if pthRes['covMin'] >= mutRes['covMin']:
+            if isBetter(pthRes, mutRes):
                 mutRes = pthRes
 
         hdrs = ['n']
         fmts = ['%d']
         outs = [n]
 
-        #wtAllele = ((wtRes['covMin'] > Q) and (wtRes['binom'] < 0.05))
-        #mutAllele = ((mutRes['covMin'] > Q) and (mutRes['binom'] < 0.05))
         wtAllele = ((wtRes['covMin'] > Q) and (wtRes['hamming'] < 4))
         mutAllele = ((mutRes['covMin'] > Q) and (mutRes['hamming'] < 4))
         resV = 1*wtAllele + 2*mutAllele
@@ -822,6 +913,10 @@ def main(argv):
         hdrs += ['res']
         fmts += ['%s']
         outs += [res]
+
+        #hdrs += ['ks0', 'ks1']
+        #fmts += ['%g', '%g']
+        #outs += [vd0, vd1]
 
         hdrs += ['wtMin', 'mutMin']
         fmts += ['%d', '%d']
