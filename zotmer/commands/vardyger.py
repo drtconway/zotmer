@@ -25,10 +25,44 @@ import yaml
 
 from pykmer.basics import ham, kmersList, kmersWithPosList, kmersWithPosLists, rc, render
 from pykmer.file import openFile, readFasta, readFastq
-from zotmer.library.debruijn import interpolate
+from zotmer.library.debruijn import interpolate, paths
 from zotmer.library.hgvs import Duplication
 from zotmer.library.reads import reads
 from zotmer.library.align import revComp
+
+class Pather(object):
+    def __init__(self, K, xs):
+        self.K = K
+        self.M = ((1 << (2*K)) - 1)
+        self.S = 2*(K-1)
+        self.xs = xs
+
+    def succ(self, x):
+        y0 = (x << 2) & self.M
+        for i in range(4):
+            y = y0 + i
+            if y in self.xs:
+                yield y
+
+    def pred(self, x):
+        y0 = x >> 2
+        for i in range(4):
+            y = y0 + (i << self.S)
+            if y in self.xs:
+                yield y
+
+    def trace(self, xb, xe, n):
+        return self.trace1([xb], xe, n)
+
+    def trace1(self, pth, xe, n):
+        if len(pth) > n:
+            return
+        if pth[-1] == xe:
+            yield pth
+        print len(pth), render(self.K, pth[-1])
+        for y in self.succ(pth[-1]):
+            for p in self.trace1(pth + [y], xe, n):
+                yield p
 
 def pairs(xs, ys):
     N = len(xs)
@@ -305,10 +339,10 @@ def main(argv):
     L = None
     X = [{} for n in range(N)]
     for itm in reads(opts['<input>'], K=K, reads=True, kmers=True, both=True, verbose=verbose):
-        rd = itm[0][0]
+        rd = itm.reads[0]
         L = len(rd)
 
-        xs = itm[1][0][0]
+        xs = itm.kmers[0]
         hits = set([])
         for x in xs:
             if x in bait:
@@ -323,7 +357,49 @@ def main(argv):
     hdrShown = False
     vn = 0
     for n in range(N):
-        xs = X[n]
+        xs = {}
+        for (x,c) in X[n].iteritems():
+            if c >= 10:
+                xs[x] = c
+
+        seq = seqs[names[n]]
+
+        rngs = []
+        st = None
+        en = None
+        inside = False
+        xx = []
+        for x in kmersList(K, seq, False):
+            if x in xs:
+                xx.append('.')
+            else:
+                xx.append('X')
+        print ''.join(xx)
+        for x in kmersList(K, seq, False):
+            if not inside:
+                if x in xs:
+                    st = x
+                else:
+                    inside = True
+            else:
+                if x in xs:
+                    en = x
+                    rngs.append((st, en))
+                    st = x
+                    en = None
+                    inside = False
+        if inside:
+            rngs.append((st, en))
+
+        pthr = Pather(K, xs)
+
+        for (x,y) in rngs:
+            if x is None or y is None:
+                continue
+            print render(K, x), render(K, y)
+            for p in pthr.trace(x, y, 100):
+                print renderPath(K, p)
+        continue
 
         fst = {}
         lst = {}

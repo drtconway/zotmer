@@ -11,9 +11,8 @@ Options:
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.001]
     -B BINFUNC      binning function to use [default: none]
     -c FILENAME     capture reads into named zipfile
-    -S SCALE        scaling factor for binning function [default: 1.0]
     -f FILENAME     read variants from a file
-    -F FORMAT       a format string for printing results [default: ks]
+    -F FORMAT       a format string for printing results [default: ks,binom]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -s              single stranded k-mer extraction
@@ -26,6 +25,7 @@ The value is a comma separated list. The order of fields is fixed,
 so the order in the format string is irrelevant.  The supported
 fields are:
 
+    binom           Score alleles against a binomial model for Hamming distances
     ks              Kolmogorov-Smirnov statistics
     hist            produce k-mer frequency histograms
 """
@@ -37,11 +37,11 @@ import sys
 import zipfile
 
 import docopt
-import tqdm
 import yaml
 
-from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, murmer, rc, render
+from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, lcp, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
+from pykmer.misc import unionfind
 from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
 from zotmer.library.capture import capture
 from zotmer.library.debruijn import paths # interpolate
@@ -639,6 +639,8 @@ def cat(xss):
 class AlleleFinder(object):
     def __init__(self, K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ):
         self.K = K
+        self.M = ((1 << (2*K)) - 1)
+        self.S = 2*(K-1)
         self.D = D
         self.v = v
         self.mx = mx
@@ -648,6 +650,78 @@ class AlleleFinder(object):
         self.mutSeq = mutSeq
         self.wtZ = wtZ
         self.mutZ = mutZ
+
+    def succ(self, x, xs):
+        y0 = (x << 2) & self.M
+        for i in range(4):
+            y = y0 + i
+            if y in xs:
+                yield y
+
+    def pred(self, x, xs):
+        y0 = x >> 2
+        for i in range(4):
+            y = y0 + (i << self.S)
+            if y in xs:
+                yield y
+
+    def kmerNeighbourhood(self, zs):
+        D = 2
+        mx = {}
+        for (x,c) in self.mx.iteritems():
+            if c < 10:
+                continue
+            mx[x] = c
+
+        ys = set([])
+        uf = unionfind()
+        for z in zs:
+            ys.add(z)
+            uf.find(z)
+
+        for (x,c) in mx.items():
+            if x in zs:
+                continue
+            for z in zs:
+                d = ham(x, z)
+                if d <= D:
+                    uf.union(z, x)
+                    ys.add(x)
+
+        idx = {}
+        for y in ys:
+            a = uf.find(y)
+            if a not in idx:
+                idx[a] = set([])
+            idx[a].add(y)
+
+        if False:
+            print 'graph G {'
+            for (a, xs) in idx.items():
+                for x in xs:
+                    sx = render(self.K, x)
+                    s = 'oval'
+                    if x in zs:
+                        s = 'box'
+                    print '\t%s [label="%s\\n%d", shape=%s];' % (sx, sx, self.mx[x], s)
+                for x in xs:
+                    sx = render(self.K, x)
+                    for y in xs:
+                        if y <= x:
+                            continue
+                        d = ham(x, y)
+                        if d > D:
+                            continue
+                        sy = render(self.K, y)
+                        print '\t%s -- %s [label="%d"];' % (sx, sy, d)
+            print '}'
+        ps = []
+        for (a, xs) in idx.items():
+            cs = [self.mx[x] for x in xs]
+            ds = [self.mx[z] for z in (xs & zs)]
+            p = float(sum(ds)) / float(max(1, sum(cs)))
+            ps.append(p)
+        return 1.0 - math.exp(sum([math.log(p) for p in ps])/len(ps))
 
     def simpleAlleles(self):
         ax = findSimpleAllele(self.K, self.lhsFlank, self.wtSeq, self.rhsFlank, self.mx)
@@ -808,15 +882,6 @@ def main(argv):
                 globHist[c] = 0
             globHist[c] += 1
 
-    #globCounts = sorted(globHist.keys())
-    #globT = float(sum(globHist.values()))
-    #globCdf = []
-    #rt = 0
-    #for c in globCounts:
-    #    f = globHist[c]
-    #    rt += f
-    #    globCdf.append(float(rt)/globT)
-
     hdrShown = False
     for n in range(V):
         itm = hgvsVars[n]
@@ -824,26 +889,6 @@ def main(argv):
         h = itm['hgvs']
 
         mx = cap.capKmers[n]
-
-        #vHist = {}
-        #for c in mx.itervalues():
-        #    if c < Q:
-        #        continue
-        #    if c not in vHist:
-        #        vHist[c] = 0
-        #    vHist[c] += 1
-        #vT = float(sum(vHist.values()))
-        #vCdf = []
-        #rt = 0
-        #for c in globCounts:
-        #    f = vHist.get(c, 0)
-        #    rt += f
-        #    vCdf.append(float(rt)/vT)
-        #(vd0, vd1) = ksDistance2(vCdf, globCdf)
-        #if False:
-        #    for (c, g, x) in zip(globCounts, globCdf, vCdf):
-        #        print '%d\t%d\t%d\t%d\t%g\t%g' % (n, c, globHist[c], vHist.get(c, 0), g, x)
-        #    continue
 
         if 'kmers' in fmt:
             for (x,c) in mx.iteritems():
@@ -864,7 +909,8 @@ def main(argv):
 
         af = AlleleFinder(K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ)
         j = 0
-        for (t, a) in cat([af.simpleAlleles(), af.bridgingAlleles()]):
+        #for (t, a) in cat([af.simpleAlleles(), af.bridgingAlleles()]):
+        for (t, a) in cat([af.bridgingAlleles()]):
             assert t == 'wt' or t == 'mut'
             alleles[t].append(a)
             if 'path' in fmt:
@@ -886,6 +932,7 @@ def main(argv):
         wtRes['binom'] = 1.0
         wtRes['ksDist'] = 0.0
         wtRes['hamming'] = 0
+        wtRes['path'] = []
         for pthRes in alleles['wt']:
             scorer.score(pthRes, lhsFlank, wtSeq, rhsFlank)
             if isBetter(pthRes, wtRes):
@@ -896,6 +943,7 @@ def main(argv):
         mutRes['binom'] = 1.0
         mutRes['ksDist'] = 0.0
         mutRes['hamming'] = 0
+        mutRes['path'] = []
         for pthRes in alleles['mut']:
             scorer.score(pthRes, lhsFlank, mutSeq, rhsFlank)
             if isBetter(pthRes, mutRes):
@@ -914,25 +962,47 @@ def main(argv):
         fmts += ['%s']
         outs += [res]
 
-        #hdrs += ['ks0', 'ks1']
-        #fmts += ['%g', '%g']
-        #outs += [vd0, vd1]
+        if 'lcp' in fmt:
+            zs = set(wtRes['path']) | set(mutRes['path'])
+            q = af.kmerNeighbourhood(zs)
+            #(js, ds) = af.kmerNeighbourhood(zs)
+            #jt = float(sum(js))
+            #dt = float(sum(ds))
+            #jc = 0
+            #dc = 0
+            #ksd = 0
+            #kld = 0
+            #for j in range(K+1):
+            #    jc += js[j]
+            #    dc += ds[j]
+            #    dd = jc/jt - dc/dt
+            #    ksd = max(ksd, dd)
+            #    if js[j] > 0 and ds[j] > 0:
+            #        p = js[j]/jt
+            #        q = ds[j]/dt
+            #        kld += p * math.log(p/q)
+            #    #print '%d\t%d\t%d\t%d\t%d\t%g\t%g\t%g\t%g' % (j, js[j], jc, ds[j], dc, js[j]/jt, jc/jt, ds[j]/dt, dc/dt)
+            hdrs += ['miss']
+            fmts += ['%g']
+            outs += [q]
 
         hdrs += ['wtMin', 'mutMin']
         fmts += ['%d', '%d']
         outs += [wtRes['covMin'], mutRes['covMin']]
 
-        hdrs += ['wtD', 'mutD']
-        fmts += ['%g', '%g']
-        outs += [wtRes['ksDist'], mutRes['ksDist']]
-
-        hdrs += ['wtQ', 'mutQ']
-        fmts += ['%g', '%g']
-        outs += [wtRes['binom'], mutRes['binom']]
-
         hdrs += ['wtHam', 'mutHam']
         fmts += ['%d', '%d']
         outs += [wtRes['hamming'], mutRes['hamming']]
+
+        if 'ks' in fmt:
+            hdrs += ['wtD', 'mutD']
+            fmts += ['%g', '%g']
+            outs += [wtRes['ksDist'], mutRes['ksDist']]
+
+        if 'binom' in fmt:
+            hdrs += ['wtQ', 'mutQ']
+            fmts += ['%g', '%g']
+            outs += [wtRes['binom'], mutRes['binom']]
 
         hdrs += ['hgvs']
         fmts += ['%s']

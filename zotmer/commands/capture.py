@@ -102,20 +102,15 @@ def main(argv):
     nh = 0
     for itm in reads(opts['<input>'], reads=True, kmers=True, fwdOnly=True, paired=paired, verbose=verbose):
         nr += 1
-        # itm[0] == reads
-        # item[0][i] == read end i
-        # itm[1] == kmers
-        # itm[1][i] == kmers end i
-        # itm[1][i][s] == kmers end i, strand s
-        E = len(itm[1])
+        E = len(itm.kmers)
         hits = set([])
         for i in xrange(E):
-            fwd = itm[1][i][0]
+            fwd = itm.kmers[i]
             for x in fwd:
                 if x in baits:
                     hits |= baits[x]
         for n in hits:
-            caches[n].add(itm[0])
+            caches[n].add(itm.reads)
 
         if len(hits) > 0:
             nh += 1

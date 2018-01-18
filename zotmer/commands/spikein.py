@@ -8,10 +8,12 @@ Options:
     -b BEDFILE      restrict sampling of reads to regions in the BED file
     -d DEVIATION    standard deviation of insert sizes (proportion of mean) [default: 0.1]
     -e RATE         error rate [default: 0.005]
+    -f FILE         read variants from a file
     -g DIR          directory containing reference sequences [default: .]
     -I SIZE         insert size [default: 300]
     -l FILE         log file for introduced mutations
     -L LENGTH       read length [default: 100]
+    -m FILE         read a file containing <probability, variant> pairs, one per line to introduce stochastically
     -M PROB         introduce extra substitution mutations around the variants with the given per-base probability
     -N NUMBER       number of read pairs [default: 1000000]
     -S SEED         random number generator seed
@@ -185,6 +187,20 @@ def main(argv):
             s = sf[c]
             v = (1, len(s), refSeq2Hg19[c])
 
+    mut = {}
+    if opts['-m'] is not None:
+        with openFile(opts['-m']) as f:
+            for l in f:
+                t = l.split()
+                p = float(t[0])
+                v = makeHGVS(t[1], sf)
+                a = v.accession()
+                if a not in mut:
+                    mut[a] = []
+                mut[a].append((v,p))
+    for c in mut.keys():
+        mut[c].sort()
+
     zps = []
     t = 0
     maxC = 0
@@ -206,8 +222,15 @@ def main(argv):
         c = zgen.gen()
         zcs[c] += 1
 
+    vStrs = opts['<variant>']
+    if opts['-f'] is not None:
+        with openFile(opts['-f']) as f:
+            for l in f:
+                s = l.strip()
+                vStrs.append(s)
+
     vs = {}
-    for s in opts['<variant>']:
+    for s in vStrs:
         v = makeHGVS(s, sf)
         if v is None:
             print >> sys.stderr, 'unable to parse variant: %s', (s, )
@@ -263,30 +286,21 @@ def main(argv):
                 Z = len(seq)
                 currSeq = rope.atom(seq)
                 given = vs.get(c, [])
-                if M is not None:
+                if len(mut) > 0:
                     extra = []
-                    mgen = GeomVarSource(M)
-                    for v in given:
-                        vr = v.range()
-                        extra += mgen.make(max(0, vr[0] - W), vr[0])
-                        extra += mgen.make(vr[1], min(vr[1] + W, Z))
-                    extra.sort()
-                    uniq(extra)
-                    ok = []
-                    for p in extra:
-                        r = seq[p].upper()
-                        w = Substitution(c, p, r, random.choice(altDict[r]))
-                        hit = False
+                    for (m,p) in mut.get(c, []):
+                        if p < random.random():
+                            continue
+                        if len(extra) and extra[-1].overlaps(m):
+                            continue
+                        ok = True
                         for v in given:
-                            if v.overlaps(w):
-                                hit = True
+                            if v.overlaps(m):
+                                ok = False
                                 break
-                        if not hit:
-                            ok.append(w)
-                    if logfile is not None:
-                        for v in ok:
-                            print >> logfile, str(v)
-                    given += ok
+                        if ok:
+                            extra.append(m)
+                    given += extra
                     given.sort()
                     if prog is not None and len(given) > 0:
                         prog.write("spiking in the following variants:")

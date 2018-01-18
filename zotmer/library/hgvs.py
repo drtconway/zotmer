@@ -711,3 +711,40 @@ def makeHGVS(txt, sf = None):
 
     return None
 
+def overlaps(a, b):
+    return (a[0] <= b[0] and b[0] < a[1]) \
+        or (a[0] <= b[1]-1 and b[1]-1 < a[1]) \
+        or (b[0] <= a[0] and a[0] < b[1]) \
+        or (b[0] <= a[1]-1 and a[1]-1 < b[1])
+
+def merge(vs):
+    acc = None
+    rng = None
+    sf = None
+    for v in vs:
+        if sf is None:
+            sf = v.seqFac
+        if acc is None:
+            acc = v.accession()
+            rng = v.range()
+            continue
+        if v.accession() != acc:
+            raise ValueError('cannot merge variants from different accessions')
+        r = v.range()
+        if overlaps(rng, r):
+            raise ValueError('cannot merge overlapping variants')
+        rng = (min(rng[0], r[0]), max(rng[1], r[1]))
+
+    ws = sorted(vs)
+
+    (beg, end) = rng
+
+    seq = sf[acc]
+    s = rope.atom(seq)
+    for w in ws[::-1]:
+        s = w.apply(s)
+        beg = w.liftover(beg)
+        end = w.liftover(end)
+    seq = s[beg:end]
+
+    return DeletionInsertion(acc, rng[0], rng[1], seq, sf)

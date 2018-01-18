@@ -1,6 +1,6 @@
 """
 Usage:
-    zot kmerize [-Z] [-m MEM] [-C BAITS] [-D FRAC [-S SEED]] <k> <output> <input>...
+    zot kmerize [options] <k> <output> <input>...
 
 Kmerize FASTA or FASTQ inputs to produce a standard container object.
 
@@ -18,6 +18,7 @@ Options:
     -D FRAC     subsample k-mers, using FRAC proportion of k-mers
     -S SEED     if -D is given, give a seed for determining the
                 subspace (defaults to 0).
+    -v          produce verbose progress messages
 """
 
 import array
@@ -35,23 +36,7 @@ from pykmer.timer import timer
 
 from zotmer.library.files import countsWriter, kmerWriter, readKmersAndCounts, writeKmersAndCounts, writeKmersAndCounts2
 import zotmer.library.kmers as zotk
-
-def partSort(K, xs):
-    B = 12
-    J = 1 << B
-    M = J - 1
-    S = 2*K - B
-    ps = [[] for i in xrange(J)]
-    for x in xs:
-        i = x >> S
-        ps[i].append(x)
-
-    i = 0
-    for p in ps:
-        p.sort()
-        for y in p:
-            xs[i] = y
-            i += 1
+from zotmer.library.reads import reads
 
 def merge(xs, cs, ys, zs, ss):
 
@@ -243,7 +228,9 @@ def mergeN(xss, hist):
                 q.pop()
                 if len(q) > 0:
                     v = q.front()
-        hist[c] = 1 + hist.get(c, 0)
+        if c not in hist:
+            hist[c] = 0
+        hist[c] += 1
         yield (x, c)
 
 class _kmerRadixBlockStream(object):
@@ -449,56 +436,6 @@ class KmerAccumulator2:
         self.flush()
         return self.idxC
 
-def pairs(xs):
-    i = 0
-    res = []
-    while i + 1 < len(xs):
-        res.append((xs[i], xs[i + 1]))
-        i += 2
-    if i < len(xs):
-        res.append((xs[i], ))
-    return res
-
-def stripCompressionSuffix(nm):
-    if nm.endswith('.gz'):
-        return nm[:-3]
-    return nm
-
-def isFasta(nm):
-    bnm = stripCompressionSuffix(nm)
-    if bnm.endswith(".fa"):
-        return True
-    if bnm.endswith(".fasta"):
-        return True
-    if bnm.endswith(".fas"):
-        return True
-    if bnm.endswith(".fna"):
-        return True
-
-def mkParser(fn):
-    if isFasta(fn):
-        for (nm, seq) in readFasta(openFile(fn)):
-            yield [(nm, seq)]
-    else:
-        for grps in readFastqBlock(openFile(fn)):
-            yield [(grp[0], grp[1]) for grp in grps]
-
-def mkPairs(xs):
-    m = 0
-    p = 0
-    n = 0
-    for x in xs:
-        if x != p:
-            if n > 0:
-                m += 1
-                yield (p, n)
-            p = x
-            n = 0
-        n += 1
-    if n > 0:
-        m += 1
-        yield (p, n)
-
 def hist(zs, h):
     for z in zs:
         h[z[1]] = 1 + h.get(z[1], 0)
@@ -513,8 +450,12 @@ def histBlock(zss, h):
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
+    verbose = opts['-v']
+
     K = int(opts['<k>'])
+
     out = opts['<output>']
+
     Z = 1024*1024*32
     if opts['-m'] is not None:
         Z = 1024*1024*int(opts['-m'])
@@ -543,79 +484,59 @@ def main(argv):
             xs |= set(kmersList(K, seq, True))
         B = xs
 
-    PN = 1024*1024
-
     tmpnm = tmpfile('.pmc')
     with casket(tmpnm, 'w') as z:
         nr = 0
-        wallTimer = timer()
-        idxTimer = timer()
-        writingTimer = timer()
-        writingTimer.pause()
-        for fn in opts['<input>']:
-            for rds in mkParser(fn):
-                for (nm, seq) in rds:
-                    nr += 1
-                    if nr & (PN - 1) == 0:
-                        print >> sys.stderr, 'reads processed:', nr, int(wallTimer.rate(nr)), 'reads/second'
-                    xs = kmersList(K, seq, True)
+        for itm in reads(opts['<input>'], K=K, pairs=False, reads=False, kmers=True, both=True, verbose=verbose):
+            xs = itm.kmers[0]
+            for x in xs:
+                acgt[x&3] += 1
+            if d is not None:
+                for x in xs:
+                    if x in cacheNo:
+                        continue
+                    if x not in cacheYes:
+                        if not sub(S, d, x):
+                            cacheNo.add(x)
+                            continue
+                        cacheYes.add(x)
+                    buf.add(x)
+                    m += 1
+                    n += 1
+                if len(cacheYes) > 1000000:
+                    cacheYes = set([])
+                if len(cacheNo) > 1000000:
+                    cacheNo = set([])
+            elif B is not None:
+                found = False
+                for x in xs:
+                    if x in B:
+                        found = True
+                        break
+                if found:
+                    buf.addList(xs)
                     for x in xs:
-                        acgt[x&3] += 1
-                    if d is not None:
-                        for x in xs:
-                            if x in cacheNo:
-                                continue
-                            if x not in cacheYes:
-                                if not sub(S, d, x):
-                                    cacheNo.add(x)
-                                    continue
-                                cacheYes.add(x)
-                            buf.add(x)
-                            m += 1
-                            n += 1
-                        if len(cacheYes) > 1000000:
-                            cacheYes = set([])
-                        if len(cacheNo) > 1000000:
-                            cacheNo = set([])
-                    elif B is not None:
-                        found = False
-                        for x in xs:
-                            if x in B:
-                                found = True
-                                break
-                        if found:
-                            buf.addList(xs)
-                            for x in xs:
-                                m += 1
-                                n += 1
-                    else:
-                        buf.addList(xs)
-                        for x in xs:
-                            m += 1
-                            n += 1
-                    if (nr % 1023) == 0 and buf.mem() >= Z//2:
-                        idxTimer.pause()
-                        writingTimer.resume()
-                        writingTimer.tick()
-                        fn = 'tmps-%d' % (len(tmps),)
-                        #print >> sys.stderr, "writing " + fn + "\t" + tmpnm
-                        tmps.append(fn)
-                        writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
-                        buf.clear()
-                        n = 0
-                        writingTimer.pause()
-                        idxTimer.resume()
-        idxTimer.pause()
+                        m += 1
+                        n += 1
+            else:
+                buf.addList(xs)
+                for x in xs:
+                    m += 1
+                    n += 1
+
+            nr += 1
+            if (nr & 1023) == 0 and buf.mem() >= Z//2:
+                fn = 'tmps-%d' % (len(tmps),)
+                tmps.append(fn)
+                writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
+                buf.clear()
+                n = 0
 
         if len(tmps) and len(buf):
-            writingTimer.resume()
-            writingTimer.tick()
             fn = 'tmps-%d' % (len(tmps),)
-            ##print >> sys.stderr, "writing " + fn + "\t" + tmpnm
             tmps.append(fn)
             writeKmersAndCounts2(z, buf.kmersOnly(), buf.countsOnly(), fn)
             buf = []
-            writingTimer.pause()
 
     with zotk.kmers(out, 'w') as z:
         h = {}
@@ -639,9 +560,6 @@ def main(argv):
         z.meta['acgt'] = acgt
         z.meta['reads'] = nr
     os.remove(tmpnm)
-
-    print >> sys.stderr, 'reads processed:', nr, int(wallTimer.rate(nr)), 'reads/second'
-    print >> sys.stderr, 'reads indexed:', nr, int(idxTimer.rate(nr)), 'reads/second'
 
 if __name__ == '__main__':
     main(sys.argv[1:])
