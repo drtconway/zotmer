@@ -710,11 +710,6 @@ class AlleleFinder(object):
             print >> sys.stderr, 'warning: highly ambiguous anchors for', str(self.v)
             print >> sys.stderr, '%d\tlhs anchors, and %d rhs anchors' % (len(lhs), len(rhs))
 
-        if True:
-            (lx,lxp) = kmersWithPosList(self.K, self.lhsFlank, False)[0]
-            (rx,rxp) = kmersWithPosList(self.K, self.rhsFlank, False)[-1]
-            for pp in findPath(self.K, self.mx, lx, lxp, rx, rxp):
-                print render(self.K, lx), render(self.K, rx), len(pp['path']), pp['covMin'], renderPath(self.K, pp['path'])
         for (lx, lxp) in lhs:
             for (rx, rxp) in rhs:
                 if self.wtZ == self.mutZ:
