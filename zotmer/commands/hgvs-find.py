@@ -1001,7 +1001,7 @@ def main(argv):
 
             #wtVaf = wtMean/max(1.0, wtMean+mutMean)
             #mutVaf = mutMean/max(1.0, wtMean+mutMean)
-            totX  = max([1.0, wtMedian+mutMedian, float(q90)])
+            totX  = max([1.0, float(wtMedian+mutMedian), float(q90)])
             wtVaf = wtMedian/totX
             mutVaf = mutMedian/totX
 
