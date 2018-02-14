@@ -10,9 +10,11 @@ Options:
     -X              index HGVS variants
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.001]
     -B BINFUNC      binning function to use [default: none]
+    -C MINCOV       minimum coverage to call an allele [default: 10]
     -c FILENAME     capture reads into named zipfile
+    -D MAXHAM       maximum hamming distance to allow in flanks for calling an allele [default: 4]
     -f FILENAME     read variants from a file
-    -F FORMAT       a format string for printing results [default: ks,binom]
+    -F FORMAT       a format string for printing extra result statistics
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -s              single stranded k-mer extraction
@@ -39,7 +41,7 @@ import zipfile
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, lcp, murmer, rc, render
+from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
@@ -464,15 +466,17 @@ def renderPath(K, xs):
     return ''.join(r)
 
 def makeIndexedVariant(v, K):
+    #W = 2*K
+    W = 3*K
     r = {}
     r['hgvs'] = str(v)
     rng = v.range()
     big = v.loadAccession()
-    lhsSt = rng[0] - 2*K
+    lhsSt = rng[0] - W
     lhsEn = rng[0]
     lhs = big[lhsSt:lhsEn].upper()
     rhsSt = rng[1]
-    rhsEn = rng[1] + 2*K
+    rhsEn = rng[1] + W
     rhs = big[rhsSt:rhsEn].upper()
     r['lhsFlank'] = lhs
     r['rhsFlank'] = rhs
@@ -588,6 +592,19 @@ def findAllele(K, mx, lx, lxp, rx, rxp, z):
         res['rhsPos'] = rxp
         yield res
 
+def findPath(K, mx, lx, lxp, rx, rxp):
+    for pth in paths(K, mx, lx, rx, slice(1, 250)):
+        seq = renderPath(K, pth)
+        seq = seq[lxp+K:-(rxp+K)]
+        res = {}
+        res['ancPath'] = pth
+        res['allele'] = seq
+        res['covMin'] = min([mx[x] for x in pth[(lxp+1):-(rxp+1)]])
+        res['path'] = pth[1:-1]
+        res['lhsPos'] = lxp
+        res['rhsPos'] = rxp
+        yield res
+
 class Scorer(object):
     def __init__(self, K):
         self.K = K
@@ -636,6 +653,31 @@ def cat(xss):
         for x in xs:
             yield x
 
+def adjustCounts(K, D, xs, ys):
+    res = dict([(y, xs[y]) for y in ys])
+    for (x,c) in xs.iteritems():
+        if x in res:
+            continue
+        dMin = D
+        zs = []
+        for y in ys:
+            d = ham(x, y)
+            if d > dMin:
+                continue
+            if d < dMin:
+                dMin = d
+                zs = []
+            zs.append(y)
+        t = sum([xs[z] for z in zs])
+        u = random.random() * t
+        for z in zs:
+            zc = xs[z]
+            if u < zc:
+                res[z] += c
+                break
+            u -= zc
+    return res
+
 class AlleleFinder(object):
     def __init__(self, K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ):
         self.K = K
@@ -650,78 +692,6 @@ class AlleleFinder(object):
         self.mutSeq = mutSeq
         self.wtZ = wtZ
         self.mutZ = mutZ
-
-    def succ(self, x, xs):
-        y0 = (x << 2) & self.M
-        for i in range(4):
-            y = y0 + i
-            if y in xs:
-                yield y
-
-    def pred(self, x, xs):
-        y0 = x >> 2
-        for i in range(4):
-            y = y0 + (i << self.S)
-            if y in xs:
-                yield y
-
-    def kmerNeighbourhood(self, zs):
-        D = 2
-        mx = {}
-        for (x,c) in self.mx.iteritems():
-            if c < 10:
-                continue
-            mx[x] = c
-
-        ys = set([])
-        uf = unionfind()
-        for z in zs:
-            ys.add(z)
-            uf.find(z)
-
-        for (x,c) in mx.items():
-            if x in zs:
-                continue
-            for z in zs:
-                d = ham(x, z)
-                if d <= D:
-                    uf.union(z, x)
-                    ys.add(x)
-
-        idx = {}
-        for y in ys:
-            a = uf.find(y)
-            if a not in idx:
-                idx[a] = set([])
-            idx[a].add(y)
-
-        if False:
-            print 'graph G {'
-            for (a, xs) in idx.items():
-                for x in xs:
-                    sx = render(self.K, x)
-                    s = 'oval'
-                    if x in zs:
-                        s = 'box'
-                    print '\t%s [label="%s\\n%d", shape=%s];' % (sx, sx, self.mx[x], s)
-                for x in xs:
-                    sx = render(self.K, x)
-                    for y in xs:
-                        if y <= x:
-                            continue
-                        d = ham(x, y)
-                        if d > D:
-                            continue
-                        sy = render(self.K, y)
-                        print '\t%s -- %s [label="%d"];' % (sx, sy, d)
-            print '}'
-        ps = []
-        for (a, xs) in idx.items():
-            cs = [self.mx[x] for x in xs]
-            ds = [self.mx[z] for z in (xs & zs)]
-            p = float(sum(ds)) / float(max(1, sum(cs)))
-            ps.append(p)
-        return 1.0 - math.exp(sum([math.log(p) for p in ps])/len(ps))
 
     def simpleAlleles(self):
         ax = findSimpleAllele(self.K, self.lhsFlank, self.wtSeq, self.rhsFlank, self.mx)
@@ -788,9 +758,9 @@ def main(argv):
 
     K = int(opts['-k'])
 
-    D = 4
+    D = int(opts['-D'])
 
-    Q = 10
+    Q = int(opts['-C'])
 
     d = "."
     if opts['-g']:
@@ -833,7 +803,9 @@ def main(argv):
         capt = True
         zipname = opts['-c']
 
-    fmt = set(opts['-F'].split(','))
+    fmt = set([])
+    if opts['-F']:
+        fmt = set(opts['-F'].split(','))
 
     if verbose:
         print >> sys.stderr, "loading index."
@@ -892,7 +864,7 @@ def main(argv):
 
         if 'kmers' in fmt:
             for (x,c) in mx.iteritems():
-                print '%s\t%d' % (render(K, x), c)
+                print '%d\t%s\t%d' % (n, render(K, x), c)
 
         lhsFlank = itm['lhsFlank']
         rhsFlank = itm['rhsFlank']
@@ -907,10 +879,20 @@ def main(argv):
         mutSeq = itm['mutSeq']
         mutZ = v.size()
 
+        cs = [c for (x,c) in mx.iteritems() if c >= Q]
+        cs.sort()
+        nk = len(cs)
+        if nk == 0:
+            cs = [0]
+
+        q10 = cs[1*len(cs)//10]
+        q50 = cs[5*len(cs)//10]
+        q90 = cs[9*len(cs)//10]
+
         af = AlleleFinder(K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ)
         j = 0
-        #for (t, a) in cat([af.simpleAlleles(), af.bridgingAlleles()]):
-        for (t, a) in cat([af.bridgingAlleles()]):
+        #for (t, a) in cat([af.bridgingAlleles()]):
+        for (t, a) in cat([af.simpleAlleles(), af.bridgingAlleles()]):
             assert t == 'wt' or t == 'mut'
             alleles[t].append(a)
             if 'path' in fmt:
@@ -962,33 +944,27 @@ def main(argv):
         fmts += ['%s']
         outs += [res]
 
-        if 'lcp' in fmt:
-            zs = set(wtRes['path']) | set(mutRes['path'])
-            q = af.kmerNeighbourhood(zs)
-            #(js, ds) = af.kmerNeighbourhood(zs)
-            #jt = float(sum(js))
-            #dt = float(sum(ds))
-            #jc = 0
-            #dc = 0
-            #ksd = 0
-            #kld = 0
-            #for j in range(K+1):
-            #    jc += js[j]
-            #    dc += ds[j]
-            #    dd = jc/jt - dc/dt
-            #    ksd = max(ksd, dd)
-            #    if js[j] > 0 and ds[j] > 0:
-            #        p = js[j]/jt
-            #        q = ds[j]/dt
-            #        kld += p * math.log(p/q)
-            #    #print '%d\t%d\t%d\t%d\t%d\t%g\t%g\t%g\t%g' % (j, js[j], jc, ds[j], dc, js[j]/jt, jc/jt, ds[j]/dt, dc/dt)
-            hdrs += ['miss']
-            fmts += ['%g']
-            outs += [q]
+        hdrs += ['numKmers', 'covQ10', 'covQ50', 'covQ90']
+        fmts += ['%d', '%d', '%d', '%d']
+        outs += [nk, q10, q50, q90]
 
         hdrs += ['wtMin', 'mutMin']
         fmts += ['%d', '%d']
         outs += [wtRes['covMin'], mutRes['covMin']]
+
+        if 'adj' in fmt:
+            mxAdj = adjustCounts(K, D, mx, set(wtRes['path'])|set(mutRes['path']))
+            wtMinCor = 0
+            if len(wtRes['path']) > 0:
+                wtMinCor = min([mxAdj.get(x, 0) for x in wtRes['path']])
+
+            mutMinCor = 0
+            if len(mutRes['path']) > 0:
+                mutMinCor = min([mxAdj.get(x, 0) for x in mutRes['path']])
+
+            hdrs += ['wtMinCor', 'mutMinCor']
+            fmts += ['%d', '%d']
+            outs += [wtMinCor, mutMinCor]
 
         hdrs += ['wtHam', 'mutHam']
         fmts += ['%d', '%d']
@@ -1004,6 +980,35 @@ def main(argv):
             fmts += ['%g', '%g']
             outs += [wtRes['binom'], mutRes['binom']]
 
+        if 'vaf' in fmt:
+            wtXs = [mx.get(x, 0) for x in wtRes['path']]
+            if len(wtXs) == 0:
+                wtXs = [0]
+            wtXs.sort()
+            wtCount = sum(wtXs)
+            wtLen = len(wtXs)
+            wtMean = float(wtCount)/float(wtLen)
+            wtMedian = wtXs[wtLen//2]
+
+            mutXs = [mx.get(x, 0) for x in mutRes['path']]
+            if len(mutXs) == 0:
+                mutXs = [0]
+            mutXs.sort()
+            mutCount = sum(mutXs)
+            mutLen = len(mutXs)
+            mutMean = float(mutCount)/float(mutLen)
+            mutMedian = mutXs[mutLen//2]
+
+            #wtVaf = wtMean/max(1.0, wtMean+mutMean)
+            #mutVaf = mutMean/max(1.0, wtMean+mutMean)
+            totX  = max([1.0, float(wtMedian+mutMedian), float(q90)])
+            wtVaf = wtMedian/totX
+            mutVaf = mutMedian/totX
+
+            hdrs += ['wtVaf', 'mutVaf']
+            fmts += ['%g', '%g']
+            outs += [wtVaf, mutVaf]
+            
         hdrs += ['hgvs']
         fmts += ['%s']
         outs += [h]
