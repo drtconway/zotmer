@@ -11,6 +11,7 @@ class capture(object):
         self.reads = kwargs.get('reads', False)
         self.kmers = kwargs.get('kmers', True)
         self.verbose = kwargs.get('verbose', False)
+        self.capReadCounts = []
         self.capReads = []
         self.capKmers = []
 
@@ -23,6 +24,7 @@ class capture(object):
                 self.baits[x] = [n]
             elif self.baits[x][-1]  != n:
                 self.baits[x].append(n)
+        self.capReadCounts.append(0)
         self.capReads.append([[], []])
         self.capKmers.append({})
         return n
@@ -43,6 +45,7 @@ class capture(object):
         ns = set(ns)
 
         for n in ns:
+            self.capReadCounts[n] += 1
             self.capReads[n][0] += rd
 
     def addKmers(self, xs):
@@ -58,6 +61,7 @@ class capture(object):
             return
 
         for n in ns:
+            self.capReadCounts[n] += 1
             ys = self.capKmers[n]
             for x in xs:
                 if x not in ys:
@@ -76,6 +80,9 @@ class capture(object):
             return
 
         ns = set(ns)
+
+        for n in ns:
+            self.capReadCounts[n] += 1
 
         if self.reads:
             for n in ns:
@@ -106,6 +113,9 @@ class capture(object):
             return
 
         ns = set(ns)
+
+        for n in ns:
+            self.capReadCounts[n] += 1
 
         if self.reads:
             for n in ns:

@@ -14,7 +14,7 @@ Options:
     -c FILENAME     capture reads into named zipfile
     -D MAXHAM       maximum hamming distance to allow in flanks for calling an allele [default: 4]
     -f FILENAME     read variants from a file
-    -F FORMAT       a format string for printing extra result statistics
+    -F FORMAT       a format string for printing extra result statistics [default: rds, vaf]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -s              single stranded k-mer extraction
@@ -28,8 +28,10 @@ so the order in the format string is irrelevant.  The supported
 fields are:
 
     binom           Score alleles against a binomial model for Hamming distances
-    ks              Kolmogorov-Smirnov statistics
     hist            produce k-mer frequency histograms
+    ks              Kolmogorov-Smirnov statistics
+    rds             count the number of reads captured for each variant
+    vaf             compute an approximate VAF
 """
 
 import array
@@ -862,6 +864,8 @@ def main(argv):
 
         mx = cap.capKmers[n]
 
+        nr = cap.capReadCounts[n]
+
         if 'kmers' in fmt:
             for (x,c) in mx.iteritems():
                 print '%d\t%s\t%d' % (n, render(K, x), c)
@@ -944,6 +948,11 @@ def main(argv):
         fmts += ['%s']
         outs += [res]
 
+        if 'rds' in fmt:
+            hdrs += ['numReads']
+            fmts += ['%d']
+            outs += [nr]
+
         hdrs += ['numKmers', 'covQ10', 'covQ50', 'covQ90']
         fmts += ['%d', '%d', '%d', '%d']
         outs += [nk, q10, q50, q90]
@@ -951,20 +960,6 @@ def main(argv):
         hdrs += ['wtMin', 'mutMin']
         fmts += ['%d', '%d']
         outs += [wtRes['covMin'], mutRes['covMin']]
-
-        if 'adj' in fmt:
-            mxAdj = adjustCounts(K, D, mx, set(wtRes['path'])|set(mutRes['path']))
-            wtMinCor = 0
-            if len(wtRes['path']) > 0:
-                wtMinCor = min([mxAdj.get(x, 0) for x in wtRes['path']])
-
-            mutMinCor = 0
-            if len(mutRes['path']) > 0:
-                mutMinCor = min([mxAdj.get(x, 0) for x in mutRes['path']])
-
-            hdrs += ['wtMinCor', 'mutMinCor']
-            fmts += ['%d', '%d']
-            outs += [wtMinCor, mutMinCor]
 
         hdrs += ['wtHam', 'mutHam']
         fmts += ['%d', '%d']
