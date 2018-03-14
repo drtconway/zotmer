@@ -14,7 +14,7 @@ Options:
     -c FILENAME     capture reads into named zipfile
     -D MAXHAM       maximum hamming distance to allow in flanks for calling an allele [default: 4]
     -f FILENAME     read variants from a file
-    -F FORMAT       a format string for printing extra result statistics [default: rds, vaf]
+    -F FORMAT       a format string for printing extra result statistics [default: rds,vaf]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -s              single stranded k-mer extraction
@@ -712,9 +712,14 @@ class AlleleFinder(object):
             print >> sys.stderr, 'warning: highly ambiguous anchors for', str(self.v)
             print >> sys.stderr, '%d\tlhs anchors, and %d rhs anchors' % (len(lhs), len(rhs))
 
+        maxBridge = 4*self.K
+
         for (lx, lxp) in lhs:
             for (rx, rxp) in rhs:
                 if self.wtZ == self.mutZ:
+                    if self.wtZ > maxBridge:
+                        print >> sys.stderr, 'warning: cannot bridge alleles because they are too long (%d) for %s' % (self.wtZ, self.v)
+                        continue
                     for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.wtZ):
                         pthSeq = pthRes['allele']
                         if pthSeq == self.wtSeq:
@@ -723,15 +728,21 @@ class AlleleFinder(object):
                         if self.mutSeq is None or pthSeq == self.mutSeq:
                             yield ('mut', pthRes)
                 else:
-                    for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.wtZ):
-                        pthSeq = pthRes['allele']
-                        if pthSeq == self.wtSeq:
-                            yield ('wt', pthRes)
+                    if self.wtZ > maxBridge:
+                        print >> sys.stderr, 'warning: cannot bridge wt allele because it is too long (%d) for %s' % (self.wtZ, self.v)
+                    else:
+                        for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.wtZ):
+                            pthSeq = pthRes['allele']
+                            if pthSeq == self.wtSeq:
+                                yield ('wt', pthRes)
 
-                    for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.mutZ):
-                        pthSeq = pthRes['allele']
-                        if self.mutSeq is None or pthSeq == self.mutSeq:
-                            yield ('mut', pthRes)
+                    if self.mutZ > maxBridge:
+                        print >> sys.stderr, 'warning: cannot bridge mut allele because it is too long (%d) for %s' % (self.mutZ, self.v)
+                    else:
+                        for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.mutZ):
+                            pthSeq = pthRes['allele']
+                            if self.mutSeq is None or pthSeq == self.mutSeq:
+                                yield ('mut', pthRes)
 
 class SequenceFactory(object):
     def __init__(self, home):

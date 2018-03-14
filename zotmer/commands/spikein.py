@@ -149,6 +149,8 @@ def readBED(f):
         if c not in res:
             res[c] = []
         res[c].append(v)
+    for c in res.keys():
+        res[c].sort()
     return res
 
 def liftover(vs, p):
