@@ -730,6 +730,7 @@ class AlleleFinder(object):
                 else:
                     if self.wtZ > maxBridge:
                         print >> sys.stderr, 'warning: cannot bridge wt allele because it is too long (%d) for %s' % (self.wtZ, self.v)
+                        continue
                     else:
                         for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.wtZ):
                             pthSeq = pthRes['allele']
@@ -738,6 +739,7 @@ class AlleleFinder(object):
 
                     if self.mutZ > maxBridge:
                         print >> sys.stderr, 'warning: cannot bridge mut allele because it is too long (%d) for %s' % (self.mutZ, self.v)
+                        continue
                     else:
                         for pthRes in findAllele(self.K, self.mx, lx, lxp, rx, rxp, self.mutZ):
                             pthSeq = pthRes['allele']
@@ -1023,6 +1025,7 @@ def main(argv):
             hdrShown = True
             print '\t'.join(hdrs)
         print '\t'.join(fmts) % tuple(outs)
+        sys.stdout.flush()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
