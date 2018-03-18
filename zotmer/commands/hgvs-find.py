@@ -1023,6 +1023,7 @@ def main(argv):
             hdrShown = True
             print '\t'.join(hdrs)
         print '\t'.join(fmts) % tuple(outs)
+        sys.stdout.flush()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
