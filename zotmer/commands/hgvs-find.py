@@ -567,6 +567,41 @@ def consAllele(lhs, mid, rhs, lp, rp):
         return None
     return lhs[-lp:] + mid + rhs[:rp]
 
+def consMask(s):
+    r = 0
+    for c in s:
+        v = 0
+        if c == '1':
+            v = 3
+        r = (r << 2) | v
+    return r
+
+def debruijnIntersection(K, xs, ys):
+    K1 = K - 1
+    M1 = (1 << (2*K1)) - 1
+
+    xIdx = {}
+    for x in xs:
+        x1 = x & M1
+        if x1 not in xIdx:
+            xIdx[x1] = []
+        xIdx[x1].append(x)
+
+    yIdx = {}
+    for y in ys:
+        y1 = y >> 2
+        if y1 not in yIdx:
+            yIdx[y1] = []
+        yIdx[y1].append(y)
+
+    vs = []
+    ws = []
+    for z1 in set(xIdx.keys()) & set(yIdx.keys()):
+        vs += xIdx[z1]
+        ws += yIdx[z1]
+
+    return (vs, ws)
+
 def findSimpleAllele(K, lhs, mid, rhs, mx):
     allele = consAllele(lhs, mid, rhs, K-1, K-1)
     xs = kmersList(K, allele)
@@ -579,8 +614,97 @@ def findSimpleAllele(K, lhs, mid, rhs, mx):
     res['rhsPos'] = 0
     return res
 
+def findFairlySimpleAllele(K, lhs, mid, rhs, mx):
+    allele = consAllele(lhs, mid, rhs, K-1, K-1)
+    mask = ''.join(['0' * (K - 2), '1', '1' * len(mid), '1', '0' * (K - 2)])
+    xs = []
+    ms = []
+    for (x,p) in kmersWithPosList(K, allele):
+        xs.append(x)
+        p -= 1
+        m = consMask(mask[p:p+K])
+        ms.append(m)
+    Y = []
+    for (x,m) in zip(xs, ms):
+        y0 = x & m
+        ys = []
+        for (y,c) in mx.iteritems():
+            #if c < 6:
+            #    continue
+            if (y & m) != y0:
+                continue
+            d = ham(x, y)
+            if d < 3:
+               ys.append(y) 
+        if len(ys) == 0:
+            return
+        ys = sorted(ys, cmp=lambda a,b: cmp(mx[b], mx[a]))
+        Y.append(ys)
+
+    done = False
+    n = 0
+    while not done:
+        done = True
+        n += 1
+        d = 0
+        for j in range(1, len(Y)):
+            i = j - 1
+            vs0 = Y[i]
+            ws0 = Y[j]
+            (vs1, ws1) = debruijnIntersection(K, vs0, ws0)
+            #d += (len(vs0) - len(vs1))
+            #d += (len(ws0) - len(ws1))
+            if len(vs1) == 0 or len(ws1) == 0:
+                return
+            if len(vs0) != len(vs1):
+                Y[i] = vs1
+                done = False
+            if len(ws0) != len(ws1):
+                Y[j] = ws1
+                done = False
+        #print 'iteration %d, deleted %d' % (n, d)
+
+    paths = []
+    for x in Y[0]:
+        paths.append([x])
+
+    K1 = K - 1
+    M1 = (1 << (2*K1)) - 1
+
+    for i in range(1, len(Y)):
+        #print i, len(paths)
+        nextPaths = []
+        for p in paths:
+            x = p[-1]
+            x1 = x & M1
+            for y in Y[i]:
+                y1 = y >> 2
+                if x1 == y1:
+                    nextPaths.append(p + [y])
+        paths = nextPaths
+
+    for p in paths:
+        s = sum([mx[x] for x in p])
+        s2 = sum([mx[x]*mx[x] for x in p])
+        ll = min([mx[x] for x in p])
+        hh = max([mx[x] for x in p])
+        n = len(p)
+        a = float(s)/float(n)
+        v = math.sqrt(float(s2)/float(n) - a*a)
+        seq = renderPath(K,p)
+
+        res = {}
+        res['ancPath'] = p
+        res['allele'] = seq
+        res['covMin'] = ll
+        res['path'] = p
+        res['lhsPos'] = 0
+        res['rhsPos'] = 0
+        yield res
+
 def findAllele(K, mx, lx, lxp, rx, rxp, z):
     ll = z + lxp + rxp + 1 + K
+    print >> sys.stderr, 'findAllele', lxp, rxp, z, ll
     #pth = interpolate(K, mx, lx, rx, ll)
     for pth in paths(K, mx, lx, rx, ll):
         seq = renderPath(K, pth)
@@ -702,6 +826,13 @@ class AlleleFinder(object):
         if self.mutSeq is not None:
             ax = findSimpleAllele(self.K, self.lhsFlank, self.mutSeq, self.rhsFlank, self.mx)
             if ax is not None:
+                yield ('mut', ax)
+
+    def definiteAlleles(self):
+        for ax in findFairlySimpleAllele(self.K, self.lhsFlank, self.wtSeq, self.rhsFlank, self.mx):
+            yield ('wt', ax)
+        if self.mutSeq is not None:
+            for ax in findFairlySimpleAllele(self.K, self.lhsFlank, self.mutSeq, self.rhsFlank, self.mx):
                 yield ('mut', ax)
 
     def bridgingAlleles(self):
@@ -907,9 +1038,14 @@ def main(argv):
         q90 = cs[9*len(cs)//10]
 
         af = AlleleFinder(K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ)
+        finders = []
+        if not v.anonymous():
+            finders.append(af.definiteAlleles())
+        else:
+            finders.append(af.bridgingAlleles())
+
         j = 0
-        #for (t, a) in cat([af.bridgingAlleles()]):
-        for (t, a) in cat([af.simpleAlleles(), af.bridgingAlleles()]):
+        for (t, a) in cat(finders):
             assert t == 'wt' or t == 'mut'
             alleles[t].append(a)
             if 'path' in fmt:
