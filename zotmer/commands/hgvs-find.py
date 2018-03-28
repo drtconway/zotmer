@@ -962,11 +962,15 @@ def main(argv):
     with open(opts['<index>']) as f:
         hgvsVars = yaml.load(f)
 
-    V = len(hgvsVars)
+    NV = len(hgvsVars)
+
+    combineStrands = True
+    if opts['-s']:
+        combineStrands = False
 
     cap = capture(K, reads=capt, kmers=True, verbose=verbose)
 
-    for n in range(V):
+    for n in range(NV):
         itm = hgvsVars[n]
         h = itm['hgvs']
         v = makeHGVS(h)
@@ -977,10 +981,6 @@ def main(argv):
 
     if verbose:
         print >> sys.stderr, "done."
-
-    combineStrands = True
-    if opts['-s']:
-        combineStrands = False
 
     rn = 0
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, both=True, verbose=verbose):
@@ -994,7 +994,7 @@ def main(argv):
 
     globHist = {}
 
-    for n in range(V):
+    for n in range(NV):
         mx = cap.capKmers[n]
         for c in mx.itervalues():
             if c < Q:
@@ -1004,7 +1004,7 @@ def main(argv):
             globHist[c] += 1
 
     hdrShown = False
-    for n in range(V):
+    for n in range(NV):
         itm = hgvsVars[n]
         v = itm['var']
         h = itm['hgvs']
