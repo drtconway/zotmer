@@ -19,6 +19,7 @@ Options:
     -g PATH         directory of FASTQ reference sequences
     -s              single stranded k-mer extraction
     -v              produce verbose output
+    -V VAF          minimum vaf for calling an allele [default: 0.05]
 
 Format Strings
 
@@ -908,6 +909,8 @@ def main(argv):
 
     Q = int(opts['-C'])
 
+    V = float(opts['-V'])
+
     d = "."
     if opts['-g']:
         d = opts['-g']
@@ -1084,12 +1087,35 @@ def main(argv):
             if isBetter(pthRes, mutRes):
                 mutRes = pthRes
 
+        if True:
+            wtXs = [mx.get(x, 0) for x in wtRes['path']]
+            if len(wtXs) == 0:
+                wtXs = [0]
+            wtXs.sort()
+            wtCount = sum(wtXs)
+            wtLen = len(wtXs)
+            wtMean = float(wtCount)/float(wtLen)
+            wtMedian = wtXs[wtLen//2]
+
+            mutXs = [mx.get(x, 0) for x in mutRes['path']]
+            if len(mutXs) == 0:
+                mutXs = [0]
+            mutXs.sort()
+            mutCount = sum(mutXs)
+            mutLen = len(mutXs)
+            mutMean = float(mutCount)/float(mutLen)
+            mutMedian = mutXs[mutLen//2]
+
+            totX  = max([1.0, float(wtMedian+mutMedian), float(q90)])
+            wtVaf = wtMedian/totX
+            mutVaf = mutMedian/totX
+
         hdrs = ['n']
         fmts = ['%d']
         outs = [n]
 
-        wtAllele = ((wtRes['covMin'] > Q) and (wtRes['hamming'] < 4))
-        mutAllele = ((mutRes['covMin'] > Q) and (mutRes['hamming'] < 4))
+        wtAllele = ((wtRes['covMin'] > Q) and (wtRes['hamming'] < 4)) and (wtVaf > V)
+        mutAllele = ((mutRes['covMin'] > Q) and (mutRes['hamming'] < 4)) and (mutVaf > V)
         resV = 1*wtAllele + 2*mutAllele
         res = ['null', 'wt', 'mut', 'wt/mut'][resV]
 
@@ -1125,30 +1151,6 @@ def main(argv):
             outs += [wtRes['binom'], mutRes['binom']]
 
         if 'vaf' in fmt:
-            wtXs = [mx.get(x, 0) for x in wtRes['path']]
-            if len(wtXs) == 0:
-                wtXs = [0]
-            wtXs.sort()
-            wtCount = sum(wtXs)
-            wtLen = len(wtXs)
-            wtMean = float(wtCount)/float(wtLen)
-            wtMedian = wtXs[wtLen//2]
-
-            mutXs = [mx.get(x, 0) for x in mutRes['path']]
-            if len(mutXs) == 0:
-                mutXs = [0]
-            mutXs.sort()
-            mutCount = sum(mutXs)
-            mutLen = len(mutXs)
-            mutMean = float(mutCount)/float(mutLen)
-            mutMedian = mutXs[mutLen//2]
-
-            #wtVaf = wtMean/max(1.0, wtMean+mutMean)
-            #mutVaf = mutMean/max(1.0, wtMean+mutMean)
-            totX  = max([1.0, float(wtMedian+mutMedian), float(q90)])
-            wtVaf = wtMedian/totX
-            mutVaf = mutMedian/totX
-
             hdrs += ['wtVaf', 'mutVaf']
             fmts += ['%g', '%g']
             outs += [wtVaf, mutVaf]
