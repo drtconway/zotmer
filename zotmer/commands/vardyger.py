@@ -1,4 +1,3 @@
-
 """
 zot vardyger - search for tandem duplications
 
