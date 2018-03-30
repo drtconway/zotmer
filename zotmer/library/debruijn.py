@@ -34,7 +34,7 @@ def test_is_in_2():
     for i in range(10):
         assert is_in(i, n)
 
-def less_than_max(i, n):
+def less_than_or_equal_max(i, n):
     if isinstance(n, int):
         return i <= n
     assert isinstance(n, slice)
@@ -42,25 +42,25 @@ def less_than_max(i, n):
         return False
     return True
 
-def test_less_than_max_0():
+def test_less_than_or_equal_max_0():
     n = 0
     i = 0
-    assert not less_than_max(i, n)
+    assert less_than_or_equal_max(i, n)
 
-def test_less_than_max_1():
+def test_less_than_or_equal_max_1():
     n = 1
     i = 0
-    assert less_than_max(i, n)
+    assert less_than_or_equal_max(i, n)
 
-def test_less_than_max_2():
+def test_less_than_or_equal_max_2():
     n = 10
     for i in range(n):
-        assert less_than_max(i, n)
+        assert less_than_or_equal_max(i, n)
 
-def test_less_than_max_3():
+def test_less_than_or_equal_max_3():
     n = slice(10)
     for i in range(10):
-        assert less_than_max(i, n)
+        assert less_than_or_equal_max(i, n)
 
 def follows(s, t):
     if s[1:] != t[:-1]:
@@ -100,7 +100,41 @@ class Interpolator(object):
         rev[xe] = [[xe]]
 
         i = 1
-        while less_than_max(i, n):
+        while less_than_or_equal_max(i, n):
+            if is_in(i, n):
+                for x in set(fwd.keys()) & set(rev.keys()):
+                    for (fst, snd) in cartesian(fwd[x], rev[x]):
+                        yield fst + snd[1:]
+            if (i & 1) == 0:
+                nextFwd = {}
+                for (x,ps) in fwd.iteritems():
+                    for y in self.succ(x):
+                        if y not in nextFwd:
+                            nextFwd[y] = []
+                        for p in ps:
+                            nextFwd[y].append(p + [y])
+                fwd = nextFwd
+            else:
+                nextRev = {}
+                for (x,ps) in rev.iteritems():
+                    for y in self.pred(x):
+                        if y not in nextRev:
+                            nextRev[y] = []
+                        for p in ps:
+                            nextRev[y].append([y] + p)
+                rev = nextRev
+            i += 1
+
+    def manyPaths(self, xbs, xes, n):
+        fwd = {}
+        for xb in xbs:
+            fwd[xb] = [[xb]]
+        rev = {}
+        for xe in xes:
+            rev[xe] = [[xe]]
+
+        i = 1
+        while less_than_or_equal_max(i, n):
             if is_in(i, n):
                 for x in set(fwd.keys()) & set(rev.keys()):
                     for (fst, snd) in cartesian(fwd[x], rev[x]):
@@ -152,6 +186,22 @@ def paths(K, xs, xb, xe, n):
     """
     I = Interpolator(K, xs)
     for p in I.path(xb, xe, n):
+        yield p
+
+def manyPaths(K, xs, xbs, xes, n):
+    """
+    Find paths through the de bruijn graph implied by xs, beginning
+    at a member of xbs and ending at an element of xes. n specifies
+    the length of the path. If it is an integer, then it gives an
+    exact length of the path, otherwise it must be a slice which
+    defines a half open interval within which the length of the
+    path must lie.  If such a path exists, return the sequence of
+    k-mers that form the path, including the endpoints. NB if xb
+    == xe, then the path will be
+    length 1.
+    """
+    I = Interpolator(K, xs)
+    for p in I.manyPaths(xbs, xes, n):
         yield p
 
 def interpolate(K, xs, xb, xe, n):
@@ -222,3 +272,21 @@ def test_interpolate3Exacxt() :
     for i in range(len(ks)):
         assert ks[i] == p[i]
 
+def junction_kmers(K, st, en):
+    M = (1 << (2*K)) - 1
+    r = []
+    for i in range(K+1):
+        j = K - i
+        x = st << (2*i)
+        y = en >> (2*j)
+        z = (x | y) & M
+        r.append(z)
+    return r
+
+def test_junction_kmers() :
+    K = 25
+    seq = 'TACTTGCACTGGGAGGCACAGCGGCTTTTCAGTGTCACAGGTATTACGAG'
+    xs = kmersList(K, seq)
+    assert len(xs) == K+1
+    ys = junction_kmers(K, xs[0], xs[-1])
+    assert xs == ys
