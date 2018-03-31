@@ -2,9 +2,11 @@
 A collection of de Buijn graph manipulation tools.
 """
 
+import random
+
 import pytest
 
-from pykmer.basics import kmersList
+from pykmer.basics import ham, kmersList, render
 
 def is_in(i, n):
     if isinstance(n, int):
@@ -273,6 +275,10 @@ def test_interpolate3Exacxt() :
         assert ks[i] == p[i]
 
 def junction_kmers(K, st, en):
+    """
+    Generate a list of the k-mers that form a de Bruijn path corresponding
+    to the sequence of st concatenated with the sequence of en.
+    """
     M = (1 << (2*K)) - 1
     r = []
     for i in range(K+1):
@@ -290,3 +296,177 @@ def test_junction_kmers() :
     assert len(xs) == K+1
     ys = junction_kmers(K, xs[0], xs[-1])
     assert xs == ys
+
+def debruijn_intersection(K, xs, ys):
+    """
+    For two lists of k-mers, xs and ys, return corresponding lists vs and ws
+    such that vs contain only those elements of xs which have a de Bruijn
+    neighbour in ys, and ws contains only those elements of ys that have a
+    de Bruijn neighbour in xs.
+    """
+    K1 = K - 1
+    M1 = (1 << (2*K1)) - 1
+
+    # Project xs on to the trailing K-1 bases
+    xIdx = {}
+    for x in xs:
+        x1 = x & M1
+        if x1 not in xIdx:
+            xIdx[x1] = []
+        xIdx[x1].append(x)
+
+    # Project ys on to the leading K-1 bases
+    yIdx = {}
+    for y in ys:
+        y1 = y >> 2
+        if y1 not in yIdx:
+            yIdx[y1] = []
+        yIdx[y1].append(y)
+
+    vs = []
+    ws = []
+    for z1 in set(xIdx.keys()) & set(yIdx.keys()):
+        vs += xIdx[z1]
+        ws += yIdx[z1]
+
+    return (vs, ws)
+
+class fixed_path_finder(object):
+    def __init__(self, K, D, X):
+        self.K = K
+        self.M = (1 << (2*K)) - 1
+        self.D = D
+        self.X = X
+
+        self.lhsMasks = []
+        self.rhsMasks = []
+        for i in range(1,self.K+1):
+            l = (1 << (2*i)) - 1
+            r = l ^ self.M
+            self.lhsMasks.append(l)
+            self.rhsMasks.append(r)
+
+    def lhs_mask(self, i, L):
+        if i < self.K:
+            return self.lhsMasks[i]
+        return self.M
+
+    def rhs_mask(self, i, L):
+        j = i - (L - self.K)
+        if j < 0:
+            return self.M
+        assert 0 <= j and j < len(self.rhsMasks)
+        return self.rhsMasks[j]
+
+    def get_mask(self, i, L):
+        return self.lhs_mask(i, L) & self.rhs_mask(i, L)
+
+    def path_kmers(self, xs):
+        L = len(xs)
+
+        # Step 1: gather up all likely looking k-mers
+        #
+        Ys = []
+        for i in range(L):
+            x = xs[i]
+            m = self.get_mask(i, L)
+            x0 = x & m
+            ys = []
+            for y in self.X.iterkeys():
+                if (y & m) != x0:
+                    continue
+                d = ham(x, y)
+                if d < self.D:
+                    ys.append(y)
+            if len(ys) == 0:
+                return None
+            Ys.append(ys)
+
+        # Step 2: eliminate k-mers that don't form part
+        # of a complete path from xs[0]--xs[-1]
+        #
+        done = False
+        while not done:
+            done = True
+            for j in range(1, L):
+                i = j - 1
+                vs0 = Ys[i]
+                ws0 = Ys[j]
+                (vs1, ws1) = debruijn_intersection(self.K, vs0, ws0)
+                if len(vs1) == 0 or len(ws1) == 0:
+                    return None
+                if len(vs0) != len(vs1):
+                    Ys[i] = vs1
+                    done = False
+                if len(ws0) != len(ws1):
+                    Ys[j] = ws1
+                    done = False
+
+        return Ys
+
+def fixed_path_kmers(K, D, X, xs):
+    finder = fixed_path_finder(K, D, X)
+    return finder.path_kmers(xs)
+
+def test_fixed_path_kmers_0() :
+    K = 25
+    D = 3
+    seq = 'TACTTGCACTGGGAGGCACAGCGGCTTTTCAGTGTCACAGGTATTACGAG'
+    xs = kmersList(K, seq)
+    X = dict([(x,1) for x in xs])
+    Y = fixed_path_kmers(K, D, X, xs)
+    assert Y is not None
+    assert len(Y) == len(xs)
+    for i in range(len(Y)):
+        assert len(Y[i]) == 1
+        assert Y[i][0] == xs[i]
+
+def test_fixed_path_kmers_1() :
+    random.seed(17)
+    K = 25
+    D = 3
+    N = 100
+    e = 0.01
+    alts = {'A':['C','G','T'], 'C':['A','G','T'], 'G':['A','C','T'], 'T':['A','C','G']}
+    seq = 'TACTTGCACTGGGAGGCACAGCGGCTTTTCAGTGTCACAGGTATTACGAG'
+    L = len(seq)
+    xs = kmersList(K, seq)
+    X = {}
+    for i in range(N):
+        r = []
+        for j in range(L):
+            b = seq[j]
+            if random.random() < e:
+                b = random.choice(alts[b])
+            r.append(b)
+        s = ''.join(r)
+        ys = kmersList(K, s)
+        for y in ys:
+            if y not in X:
+                X[y] = 0
+            X[y] += 1
+    Y = fixed_path_kmers(K, D, X, xs)
+    assert Y is not None
+    assert len(Y) == len(xs)
+    for i in range(len(Y)):
+        assert xs[i] in Y[i]
+        V = [(render(K, y), X[y]) for y in Y[i] if y != xs[i] and X[y] > X[xs[i]]]
+        assert len(V) == 0
+
+def test_fixed_path_kmers_2() :
+    random.seed(17)
+    K = 25
+    D = 3
+    N = 100
+    e = 0.01
+    seq0 = 'TACTTGCACTGGGAGGCACAGCGGCTTTTCAGTGTCACAGGTATTACGAG'
+    seq1 = 'TACTTGCACTGGGAGGCCCAGCGGCTTTTCAGTGTCACAGGTATTAGGAG'
+    xs = kmersList(K, seq0)
+    ys = kmersList(K, seq1)
+    X = dict([(y, 1) for y in ys])
+    Y = fixed_path_kmers(K, D, X, xs)
+    assert Y is not None
+    assert len(Y) == len(xs)
+    for i in range(len(Y)):
+        assert len(Y[i]) == 1
+        assert ys[i] in Y[i]

@@ -49,7 +49,7 @@ from pykmer.file import openFile, readFasta, readFastq
 from pykmer.misc import unionfind
 from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
 from zotmer.library.capture import capture
-from zotmer.library.debruijn import paths # interpolate
+from zotmer.library.debruijn import fixed_path_kmers, paths
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19
 from zotmer.library.reads import reads
 
@@ -568,40 +568,28 @@ def consAllele(lhs, mid, rhs, lp, rp):
         return None
     return lhs[-lp:] + mid + rhs[:rp]
 
-def consMask(s):
-    r = 0
-    for c in s:
-        v = 0
-        if c == '1':
-            v = 3
-        r = (r << 2) | v
-    return r
-
-def debruijnIntersection(K, xs, ys):
-    K1 = K - 1
-    M1 = (1 << (2*K1)) - 1
-
-    xIdx = {}
+def consensus_kmer(K, xs, X):
+    R = [[0,0,0,0] for i in range(K)]
     for x in xs:
-        x1 = x & M1
-        if x1 not in xIdx:
-            xIdx[x1] = []
-        xIdx[x1].append(x)
-
-    yIdx = {}
-    for y in ys:
-        y1 = y >> 2
-        if y1 not in yIdx:
-            yIdx[y1] = []
-        yIdx[y1].append(y)
-
-    vs = []
-    ws = []
-    for z1 in set(xIdx.keys()) & set(yIdx.keys()):
-        vs += xIdx[z1]
-        ws += yIdx[z1]
-
-    return (vs, ws)
+        c = X[x]
+        for i in range(K):
+            R[i][x&3] += c
+            x >>= 2
+    c = None
+    r = 0
+    for i in range(K):
+        cMax = -1
+        bMax = 0
+        for b in range(4):
+            if R[i][b] > cMax:
+                bMax = b
+                cMax = R[i][b]
+        r |= bMax << (2*i)
+        if c is None:
+            c = cMax
+        else:
+            c = min(c, cMax)
+    return (r, c)
 
 def findSimpleAllele(K, lhs, mid, rhs, mx):
     allele = consAllele(lhs, mid, rhs, K-1, K-1)
@@ -615,93 +603,32 @@ def findSimpleAllele(K, lhs, mid, rhs, mx):
     res['rhsPos'] = 0
     return res
 
-def findFairlySimpleAllele(K, lhs, mid, rhs, mx):
+def findFairlySimpleAllele(K, D, lhs, mid, rhs, mx):
     allele = consAllele(lhs, mid, rhs, K-1, K-1)
-    mask = ''.join(['0' * (K - 2), '1', '1' * len(mid), '1', '0' * (K - 2)])
-    xs = []
-    ms = []
-    for (x,p) in kmersWithPosList(K, allele):
-        xs.append(x)
-        p -= 1
-        m = consMask(mask[p:p+K])
-        ms.append(m)
-    Y = []
-    for (x,m) in zip(xs, ms):
-        y0 = x & m
-        ys = []
-        for (y,c) in mx.iteritems():
-            #if c < 6:
-            #    continue
-            if (y & m) != y0:
-                continue
-            d = ham(x, y)
-            if d < 3:
-               ys.append(y) 
-        if len(ys) == 0:
-            return
-        ys = sorted(ys, cmp=lambda a,b: cmp(mx[b], mx[a]))
-        Y.append(ys)
+    xs = kmersList(K, allele)
 
-    done = False
-    n = 0
-    while not done:
-        done = True
-        n += 1
-        d = 0
-        for j in range(1, len(Y)):
-            i = j - 1
-            vs0 = Y[i]
-            ws0 = Y[j]
-            (vs1, ws1) = debruijnIntersection(K, vs0, ws0)
-            #d += (len(vs0) - len(vs1))
-            #d += (len(ws0) - len(ws1))
-            if len(vs1) == 0 or len(ws1) == 0:
-                return
-            if len(vs0) != len(vs1):
-                Y[i] = vs1
-                done = False
-            if len(ws0) != len(ws1):
-                Y[j] = ws1
-                done = False
-        #print 'iteration %d, deleted %d' % (n, d)
+    Y = fixed_path_kmers(K, D, mx, xs)
+    if Y is None:
+        return
 
-    paths = []
-    for x in Y[0]:
-        paths.append([x])
+    ancPath = []
+    cov = []
+    for i in range(len(xs)):
+        ys = Y[i]
+        (y,c) = consensus_kmer(K, ys, mx)
+        ancPath.append(y)
+        cov.append(c)
 
-    K1 = K - 1
-    M1 = (1 << (2*K1)) - 1
+    seq = renderPath(K, ancPath)
 
-    for i in range(1, len(Y)):
-        #print i, len(paths)
-        nextPaths = []
-        for p in paths:
-            x = p[-1]
-            x1 = x & M1
-            for y in Y[i]:
-                y1 = y >> 2
-                if x1 == y1:
-                    nextPaths.append(p + [y])
-        paths = nextPaths
-
-    for p in paths:
-        s = sum([mx[x] for x in p])
-        s2 = sum([mx[x]*mx[x] for x in p])
-        ll = min([mx[x] for x in p])
-        hh = max([mx[x] for x in p])
-        n = len(p)
-        a = float(s)/float(n)
-        v = math.sqrt(float(s2)/float(n) - a*a)
-        seq = renderPath(K,p)
-
-        res = {}
-        res['ancPath'] = p
-        res['allele'] = seq
-        res['covMin'] = ll
-        res['path'] = p
-        res['lhsPos'] = 0
-        res['rhsPos'] = 0
-        yield res
+    res = {}
+    res['ancPath'] = ancPath
+    res['allele'] = seq
+    res['covMin'] = min(cov)
+    res['path'] = ancPath
+    res['lhsPos'] = 0
+    res['rhsPos'] = 0
+    yield res
 
 def findAllele(K, mx, lx, lxp, rx, rxp, z):
     ll = z + lxp + rxp + 1 + K
@@ -830,10 +757,10 @@ class AlleleFinder(object):
                 yield ('mut', ax)
 
     def definiteAlleles(self):
-        for ax in findFairlySimpleAllele(self.K, self.lhsFlank, self.wtSeq, self.rhsFlank, self.mx):
+        for ax in findFairlySimpleAllele(self.K, self.D, self.lhsFlank, self.wtSeq, self.rhsFlank, self.mx):
             yield ('wt', ax)
         if self.mutSeq is not None:
-            for ax in findFairlySimpleAllele(self.K, self.lhsFlank, self.mutSeq, self.rhsFlank, self.mx):
+            for ax in findFairlySimpleAllele(self.K, self.D, self.lhsFlank, self.mutSeq, self.rhsFlank, self.mx):
                 yield ('mut', ax)
 
     def bridgingAlleles(self):
