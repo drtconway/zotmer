@@ -1,0 +1,67 @@
+#!/usr/bin/python
+
+import sys
+import yaml
+
+def tsv(fn):
+    hdr = None
+    with open(fn) as f:
+        for l in f:
+            t = l.split()
+            if hdr is None:
+                hdr = t
+                continue
+            yield dict(zip(hdr, t))
+
+class CheckFailed(Exception):
+    pass
+
+def check(exp, dat, throw=True):
+    if isinstance(exp, list):
+        for itm in exp:
+            ok = check(itm, dat, False)
+            if not ok:
+                if throw:
+                    raise CheckFailed
+                else:
+                    return False
+        return True
+    assert isinstance(exp, str)
+    try:
+        ok = eval(exp, globals(), dat)
+        if ok:
+            return True
+        elif throw:
+            raise CheckFailed
+        else:
+            return False
+    except CheckFailed:
+        if throw:
+            raise CheckFailed
+        else:
+            return False
+
+def check_all(exp, v):
+    try:
+        for clause in exp:
+            if 'if' in clause:
+                if check(clause['if'], v, throw=False):
+                    check(clause['then'], v)
+            else:
+                check(clause, v)
+        return True
+    except CheckFailed:
+        return False
+
+with open(sys.argv[1]) as f:
+    exp = yaml.load(f)
+
+ok = True
+for t in tsv(sys.argv[2]):
+    ok = check_all(exp, t)
+    if not ok:
+        break
+if ok:
+    print 'ACK'
+else:
+    print 'NAK'
