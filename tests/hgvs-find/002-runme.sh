@@ -1,11 +1,11 @@
 #!/bin/bash
 
-wd=tmp/001
+wd=tmp/002
 mkdir -p ${wd}
 
-v="NC_000017.10:g.7682508_7682512del"
+v="NC_000017.10:g.7668921_7668922insCCG"
 
-zot spikein -g ~/data/hg19 -b etc/TP53.bed -N 10000 -V 0.5 -S 17 -z ${wd}/reads ${v}
+zot spikein -g ~/data/hg19 -b etc/TP53.bed -N 10000 -V 0.5 -S 21 -z ${wd}/reads ${v}
 
 zot hgvs-find -X -g ~/data/hg19 ${wd}/variant.idx ${v}
 
@@ -15,8 +15,8 @@ cat > ${wd}/rules.py << EOF
 - if: n == '0'
   then:
     - res == 'wt/mut'
-    - 0.3 <= float(wtVaf) and float(wtVaf) <= 0.7
-    - 0.3 <= float(mutVaf) and float(mutVaf) <= 0.7
+    - 0.4 <= float(wtVaf) and float(wtVaf) <= 0.6
+    - 0.4 <= float(mutVaf) and float(mutVaf) <= 0.6
 EOF
 ./bin/check ${wd}/rules.py ${wd}/output.txt > ${wd}/result.txt
 

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-wd=tmp/001
+wd=tmp/005
 mkdir -p ${wd}
 
-v="NC_000017.10:g.7682508_7682512del"
+v="NC_000017.10:g.7670671_7670677dup"
 
-zot spikein -g ~/data/hg19 -b etc/TP53.bed -N 10000 -V 0.5 -S 17 -z ${wd}/reads ${v}
+zot spikein -g ~/data/hg19 -b etc/TP53.bed -N 10000 -V 0.5 -S 18 -z ${wd}/reads ${v}
 
 zot hgvs-find -X -g ~/data/hg19 ${wd}/variant.idx ${v}
 

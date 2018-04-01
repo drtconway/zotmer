@@ -17,6 +17,7 @@ Options:
     -F FORMAT       a format string for printing extra result statistics [default: rds,vaf]
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
+    -o FILENMANE    write the output to the named file rather than stdout
     -s              single stranded k-mer extraction
     -v              produce verbose output
     -V VAF          minimum vaf for calling an allele [default: 0.05]
@@ -55,6 +56,11 @@ from zotmer.library.reads import reads
 
 def sqr(x):
     return x*x
+
+def outputFile(nm):
+    if nm is None:
+        return sys.stdout
+    return openFile(nm, 'w')
 
 def merge(rs):
     r = None
@@ -930,167 +936,156 @@ def main(argv):
                 globHist[c] = 0
             globHist[c] += 1
 
-    hdrShown = False
-    for n in range(NV):
-        itm = hgvsVars[n]
-        v = itm['var']
-        h = itm['hgvs']
+    with outputFile(opts['-o']) as out:
+        hdrShown = False
+        for n in range(NV):
+            itm = hgvsVars[n]
+            v = itm['var']
+            h = itm['hgvs']
 
-        mx = cap.capKmers[n]
+            mx = cap.capKmers[n]
 
-        nr = cap.capReadCounts[n]
+            nr = cap.capReadCounts[n]
 
-        if 'kmers' in fmt:
-            for (x,c) in mx.iteritems():
-                print '%d\t%s\t%d' % (n, render(K, x), c)
+            if 'kmers' in fmt:
+                for (x,c) in mx.iteritems():
+                    print '%d\t%s\t%d' % (n, render(K, x), c)
 
-        lhsFlank = itm['lhsFlank']
-        rhsFlank = itm['rhsFlank']
+            lhsFlank = itm['lhsFlank']
+            rhsFlank = itm['rhsFlank']
 
-        alleles = {}
-        alleles['wt'] = []
-        alleles['mut'] = []
+            alleles = {}
+            alleles['wt'] = []
+            alleles['mut'] = []
 
-        wtSeq = itm['wtSeq']
-        wtZ = len(wtSeq)
+            wtSeq = itm['wtSeq']
+            wtZ = len(wtSeq)
 
-        mutSeq = itm['mutSeq']
-        mutZ = v.size()
+            mutSeq = itm['mutSeq']
+            mutZ = v.size()
 
-        cs = [c for (x,c) in mx.iteritems() if c >= Q]
-        cs.sort()
-        nk = len(cs)
-        if nk == 0:
-            cs = [0]
+            cs = [c for (x,c) in mx.iteritems() if c >= Q]
+            cs.sort()
+            nk = len(cs)
+            if nk == 0:
+                cs = [0]
 
-        q10 = cs[1*len(cs)//10]
-        q50 = cs[5*len(cs)//10]
-        q90 = cs[9*len(cs)//10]
+            q10 = cs[1*len(cs)//10]
+            q50 = cs[5*len(cs)//10]
+            q90 = cs[9*len(cs)//10]
 
-        af = AlleleFinder(K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ)
-        finders = []
-        if not v.anonymous():
-            finders.append(af.definiteAlleles())
-        else:
-            finders.append(af.bridgingAlleles())
+            af = AlleleFinder(K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ)
+            finders = []
+            if not v.anonymous():
+                finders.append(af.definiteAlleles())
+            else:
+                finders.append(af.bridgingAlleles())
 
-        j = 0
-        for (t, a) in cat(finders):
-            assert t == 'wt' or t == 'mut'
-            alleles[t].append(a)
-            if 'path' in fmt:
-                for x in a['path']:
-                    c = mx.get(x, 0)
-                    print '%d\t%d\t%s\t%s\t%d' % (n, j, t, render(K, x), c)
-                print '%d\t%d\t%s\t%s' % (n, j, t, renderPath(K, a['path']))
-            if 'cov' in fmt:
-                hh = {}
-                for x in a['path']:
-                    c = mx.get(x, 0)
-                    hh[c] = 1 + hh.get(c, 0)
-                for (c,f) in sorted(hh.items()):
-                    print '%d\t%d\t%s\t%d\t%d' % (n, j, t, c, f)
-            j += 1
+            j = 0
+            for (t, a) in cat(finders):
+                assert t == 'wt' or t == 'mut'
+                alleles[t].append(a)
+                j += 1
 
-        wtRes = {}
-        wtRes['covMin'] = 0
-        wtRes['binom'] = 1.0
-        wtRes['ksDist'] = 0.0
-        wtRes['hamming'] = 0
-        wtRes['path'] = []
-        for pthRes in alleles['wt']:
-            scorer.score(pthRes, lhsFlank, wtSeq, rhsFlank)
-            if isBetter(pthRes, wtRes):
-                wtRes = pthRes
+            wtRes = {}
+            wtRes['covMin'] = 0
+            wtRes['binom'] = 1.0
+            wtRes['ksDist'] = 0.0
+            wtRes['hamming'] = 0
+            wtRes['path'] = []
+            for pthRes in alleles['wt']:
+                scorer.score(pthRes, lhsFlank, wtSeq, rhsFlank)
+                if isBetter(pthRes, wtRes):
+                    wtRes = pthRes
 
-        mutRes = {}
-        mutRes['covMin'] = 0
-        mutRes['binom'] = 1.0
-        mutRes['ksDist'] = 0.0
-        mutRes['hamming'] = 0
-        mutRes['path'] = []
-        for pthRes in alleles['mut']:
-            scorer.score(pthRes, lhsFlank, mutSeq, rhsFlank)
-            if isBetter(pthRes, mutRes):
-                mutRes = pthRes
+            mutRes = {}
+            mutRes['covMin'] = 0
+            mutRes['binom'] = 1.0
+            mutRes['ksDist'] = 0.0
+            mutRes['hamming'] = 0
+            mutRes['path'] = []
+            for pthRes in alleles['mut']:
+                scorer.score(pthRes, lhsFlank, mutSeq, rhsFlank)
+                if isBetter(pthRes, mutRes):
+                    mutRes = pthRes
 
-        if True:
-            wtXs = [mx.get(x, 0) for x in wtRes['path']]
-            if len(wtXs) == 0:
-                wtXs = [0]
-            wtXs.sort()
-            wtCount = sum(wtXs)
-            wtLen = len(wtXs)
-            wtMean = float(wtCount)/float(wtLen)
-            wtMedian = wtXs[wtLen//2]
+            if True:
+                wtXs = [mx.get(x, 0) for x in wtRes['path']]
+                if len(wtXs) == 0:
+                    wtXs = [0]
+                wtXs.sort()
+                wtCount = sum(wtXs)
+                wtLen = len(wtXs)
+                wtMean = float(wtCount)/float(wtLen)
+                wtMedian = wtXs[wtLen//2]
 
-            mutXs = [mx.get(x, 0) for x in mutRes['path']]
-            if len(mutXs) == 0:
-                mutXs = [0]
-            mutXs.sort()
-            mutCount = sum(mutXs)
-            mutLen = len(mutXs)
-            mutMean = float(mutCount)/float(mutLen)
-            mutMedian = mutXs[mutLen//2]
+                mutXs = [mx.get(x, 0) for x in mutRes['path']]
+                if len(mutXs) == 0:
+                    mutXs = [0]
+                mutXs.sort()
+                mutCount = sum(mutXs)
+                mutLen = len(mutXs)
+                mutMean = float(mutCount)/float(mutLen)
+                mutMedian = mutXs[mutLen//2]
 
-            totX  = max([1.0, float(wtMedian+mutMedian), float(q90)])
-            wtVaf = wtMedian/totX
-            mutVaf = mutMedian/totX
+                totX  = max([1.0, float(wtMedian+mutMedian), float(q90)])
+                wtVaf = wtMedian/totX
+                mutVaf = mutMedian/totX
 
-        hdrs = ['n']
-        fmts = ['%d']
-        outs = [n]
+            hdrs = ['n']
+            fmts = ['%d']
+            outs = [n]
 
-        wtAllele = ((wtRes['covMin'] > Q) and (wtRes['hamming'] < 4)) and (wtVaf > V)
-        mutAllele = ((mutRes['covMin'] > Q) and (mutRes['hamming'] < 4)) and (mutVaf > V)
-        resV = 1*wtAllele + 2*mutAllele
-        res = ['null', 'wt', 'mut', 'wt/mut'][resV]
+            wtAllele = ((wtRes['covMin'] > Q) and (wtRes['hamming'] < 4)) and (wtVaf > V)
+            mutAllele = ((mutRes['covMin'] > Q) and (mutRes['hamming'] < 4)) and (mutVaf > V)
+            resV = 1*wtAllele + 2*mutAllele
+            res = ['null', 'wt', 'mut', 'wt/mut'][resV]
 
-        hdrs += ['res']
-        fmts += ['%s']
-        outs += [res]
+            hdrs += ['res']
+            fmts += ['%s']
+            outs += [res]
 
-        if 'rds' in fmt:
-            hdrs += ['numReads']
-            fmts += ['%d']
-            outs += [nr]
+            if 'rds' in fmt:
+                hdrs += ['numReads']
+                fmts += ['%d']
+                outs += [nr]
 
-        hdrs += ['numKmers', 'covQ10', 'covQ50', 'covQ90']
-        fmts += ['%d', '%d', '%d', '%d']
-        outs += [nk, q10, q50, q90]
+            hdrs += ['numKmers', 'covQ10', 'covQ50', 'covQ90']
+            fmts += ['%d', '%d', '%d', '%d']
+            outs += [nk, q10, q50, q90]
 
-        hdrs += ['wtMin', 'mutMin']
-        fmts += ['%d', '%d']
-        outs += [wtRes['covMin'], mutRes['covMin']]
+            hdrs += ['wtMin', 'mutMin']
+            fmts += ['%d', '%d']
+            outs += [wtRes['covMin'], mutRes['covMin']]
 
-        hdrs += ['wtHam', 'mutHam']
-        fmts += ['%d', '%d']
-        outs += [wtRes['hamming'], mutRes['hamming']]
+            hdrs += ['wtHam', 'mutHam']
+            fmts += ['%d', '%d']
+            outs += [wtRes['hamming'], mutRes['hamming']]
 
-        if 'ks' in fmt:
-            hdrs += ['wtD', 'mutD']
-            fmts += ['%g', '%g']
-            outs += [wtRes['ksDist'], mutRes['ksDist']]
+            if 'ks' in fmt:
+                hdrs += ['wtD', 'mutD']
+                fmts += ['%g', '%g']
+                outs += [wtRes['ksDist'], mutRes['ksDist']]
 
-        if 'binom' in fmt:
-            hdrs += ['wtQ', 'mutQ']
-            fmts += ['%g', '%g']
-            outs += [wtRes['binom'], mutRes['binom']]
+            if 'binom' in fmt:
+                hdrs += ['wtQ', 'mutQ']
+                fmts += ['%g', '%g']
+                outs += [wtRes['binom'], mutRes['binom']]
 
-        if 'vaf' in fmt:
-            hdrs += ['wtVaf', 'mutVaf']
-            fmts += ['%g', '%g']
-            outs += [wtVaf, mutVaf]
-            
-        hdrs += ['hgvs']
-        fmts += ['%s']
-        outs += [h]
+            if 'vaf' in fmt:
+                hdrs += ['wtVaf', 'mutVaf']
+                fmts += ['%g', '%g']
+                outs += [wtVaf, mutVaf]
 
-        if not hdrShown:
-            hdrShown = True
-            print '\t'.join(hdrs)
-        print '\t'.join(fmts) % tuple(outs)
-        sys.stdout.flush()
+            hdrs += ['hgvs']
+            fmts += ['%s']
+            outs += [h]
+
+            if not hdrShown:
+                hdrShown = True
+                print >> out, '\t'.join(hdrs)
+            print >> out, '\t'.join(fmts) % tuple(outs)
+            out.flush()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
