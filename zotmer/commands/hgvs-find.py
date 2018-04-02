@@ -12,7 +12,7 @@ Options:
     -B BINFUNC      binning function to use [default: none]
     -C MINCOV       minimum coverage to call an allele [default: 10]
     -c FILENAME     capture reads into named zipfile
-    -D MAXHAM       maximum hamming distance to allow in flanks for calling an allele [default: 4]
+    -D MAXHAM       maximum hamming distance to allow in flanks for calling an allele [default: 2]
     -f FILENAME     read variants from a file
     -F FORMAT       a format string for printing extra result statistics [default: rds,vaf]
     -k K            value of k to use [default: 25]
@@ -21,6 +21,8 @@ Options:
     -s              single stranded k-mer extraction
     -v              produce verbose output
     -V VAF          minimum vaf for calling an allele [default: 0.05]
+    -w WIDTH        [indexing] width of context for capture [default: 75]
+    -W WIDTH        [indexing] width of context for verification [default: 1024]
 
 Format Strings
 
@@ -474,26 +476,37 @@ def renderPath(K, xs):
         r.append("ACGT"[x&3])
     return ''.join(r)
 
-def makeIndexedVariant(v, K):
-    #W = 2*K
-    W = 3*K
+def context(r, W, seq):
+    Z = len(seq)
+    lhsSt = r[0] - W
+    lhsSt = max(0, lhsSt)
+    lhsEn = r[0]
+    lhs = seq[lhsSt:lhsEn].upper()
+    rhsSt = r[1]
+    rhsEn = r[1] + W
+    rhsEn = min(rhsEn, Z)
+    rhs = seq[rhsSt:rhsEn].upper()
+    return (lhs,rhs)
+
+def makeIndexedVariant(v, K, W, V):
     r = {}
     r['hgvs'] = str(v)
     rng = v.range()
-    big = v.loadAccession()
-    lhsSt = rng[0] - W
-    lhsEn = rng[0]
-    lhs = big[lhsSt:lhsEn].upper()
-    rhsSt = rng[1]
-    rhsEn = rng[1] + W
-    rhs = big[rhsSt:rhsEn].upper()
+    seq = v.loadAccession()
+
+    (lhs, rhs) = context(rng, W, seq)
     r['lhsFlank'] = lhs
     r['rhsFlank'] = rhs
-    r['wtSeq'] = big[rng[0]:rng[1]].upper()
+
+    r['wtSeq'] = seq[rng[0]:rng[1]].upper()
     if v.anonymous() or v.cryptic():
         r['mutSeq'] = None
     else:
         r['mutSeq'] = v.sequence().upper()
+
+    #(lhsVal, rhsVal) = context(rng, V, seq)
+    #r['lhsVal'] = lhsVal
+    #r['rhsVal'] = rhsVal
 
     return r
 
@@ -713,31 +726,6 @@ def cat(xss):
         for x in xs:
             yield x
 
-def adjustCounts(K, D, xs, ys):
-    res = dict([(y, xs[y]) for y in ys])
-    for (x,c) in xs.iteritems():
-        if x in res:
-            continue
-        dMin = D
-        zs = []
-        for y in ys:
-            d = ham(x, y)
-            if d > dMin:
-                continue
-            if d < dMin:
-                dMin = d
-                zs = []
-            zs.append(y)
-        t = sum([xs[z] for z in zs])
-        u = random.random() * t
-        for z in zs:
-            zc = xs[z]
-            if u < zc:
-                res[z] += c
-                break
-            u -= zc
-    return res
-
 class AlleleFinder(object):
     def __init__(self, K, D, v, mx, lhsFlank, rhsFlank, wtSeq, mutSeq, wtZ, mutZ):
         self.K = K
@@ -850,6 +838,9 @@ def main(argv):
     sf = SequenceFactory(d)
 
     if opts['-X']:
+        Wcap = int(opts['-w'])
+        Wval = int(opts['-W'])
+
         variants = opts['<variant>']
         if opts['-f']:
             with openFile(opts['-f']) as f:
@@ -870,7 +861,7 @@ def main(argv):
         rs = []
         for (acc, vs) in vx.iteritems():
             for v in vs:
-                r = makeIndexedVariant(v, K)
+                r = makeIndexedVariant(v, K, Wcap, Wval)
                 if r is not None:
                     rs.append(r)
 
