@@ -3,7 +3,9 @@
 wd=tmp/005
 mkdir -p ${wd}
 
-v="NC_000017.10:g.7670671_7670677dup"
+S=17
+
+v=$(zot hgvs-gen -g ~/data/hg19 -t dup -S ${S} etc/TP53-exons.bed)
 
 zot spikein -g ~/data/hg19 -b etc/TP53.bed -N 10000 -V 0.5 -S 18 -z ${wd}/reads ${v}
 
@@ -20,7 +22,7 @@ cat > ${wd}/rules.py << EOF
 EOF
 ./bin/check ${wd}/rules.py ${wd}/output.txt > ${wd}/result.txt
 
-echo "$0" $(cat ${wd}/result.txt)
+echo "$0" $(cat ${wd}/result.txt) ${v}
 
 cleanup=yes
 if [ $(cat ${wd}/result.txt) == 'ACK' ] && [ ${cleanup} == 'yes' ]
