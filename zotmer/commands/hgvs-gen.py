@@ -138,9 +138,12 @@ def genVar(c, seq, s, e, ts, ds):
         return hgvs.Insertion(c, p, a)
     if f == 'delins':
         p = random.randint(s, e)
-        l = geomvar(ds['del'])
-        q = min(p+l, e)
-        m = geomvar(ds['ins'])
+        while True:
+            l = geomvar(ds['del'])
+            q = min(p+l, e)
+            m = geomvar(ds['ins'])
+            if l > 1 or m > 1:
+                break
         a = ''.join([random.choice(bases) for j in range(m)])
         return hgvs.DeletionInsertion(c, p, q, a)
     if f == 'dup':
@@ -154,9 +157,12 @@ def genVar(c, seq, s, e, ts, ds):
         return hgvs.Anonymous(c, p, m)
     if f == 'and':
         p = random.randint(s, e)
-        l = geomvar(ds['del'])
-        q = min(p+l, e)
-        m = geomvar(ds['ins'])
+        while True:
+            l = geomvar(ds['del'])
+            q = min(p+l, e)
+            m = geomvar(ds['ins'])
+            if l > 1 or m > 1:
+                break
         return hgvs.AnonymousDelIns(c, p, q, m)
     print >> sys.stderr, "unknown variant type", f
     sys.exit(1)

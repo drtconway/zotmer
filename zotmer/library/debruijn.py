@@ -352,7 +352,7 @@ class fixed_path_finder(object):
         return self.M
 
     def rhs_mask(self, i, L):
-        j = i - (L - self.K)
+        j = i - (L - self.K + 1)
         if j < 0:
             return self.M
         assert 0 <= j and j < len(self.rhsMasks)
