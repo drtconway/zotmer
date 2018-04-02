@@ -1,0 +1,63 @@
+#!/usr/bin/python
+
+import sys
+
+hg19Data = [("chr1",   "NC_000001.10"),
+            ("chr2",   "NC_000002.11"),
+            ("chr3",   "NC_000003.11"),
+            ("chr4",   "NC_000004.11"),
+            ("chr5",   "NC_000005.9"),
+            ("chr6",   "NC_000006.11"),
+            ("chr7",   "NC_000007.13"),
+            ("chr8",   "NC_000008.10"),
+            ("chr9",   "NC_000009.11"),
+            ("chr10",  "NC_000010.10"),
+            ("chr11",  "NC_000011.9"),
+            ("chr12",  "NC_000012.11"),
+            ("chr13",  "NC_000013.10"),
+            ("chr14",  "NC_000014.8"),
+            ("chr15",  "NC_000015.9"),
+            ("chr16",  "NC_000016.9"),
+            ("chr17",  "NC_000017.10"),
+            ("chr18",  "NC_000018.9"),
+            ("chr19",  "NC_000019.9"),
+            ("chr20",  "NC_000020.10"),
+            ("chr21",  "NC_000021.8"),
+            ("chr22",  "NC_000022.10"),
+            ("chrX",   "NC_000023.10"),
+            ("chrY",   "NC_000024.9")]
+
+hg19ToRefseq = dict(hg19Data)
+refseqToHg19 = dict([(r, h) for (h, r) in hg19Data])
+
+def hg19(acc):
+    if acc in refseqToHg19:
+        acc = refseqToHg19[acc]
+    if not acc.startswith('chr'):
+        acc = 'chr' + acc
+    return acc
+
+genes = {}
+for l in open(sys.argv[1]):
+    t = l.split()
+    c = hg19(t[0])
+    st = int(t[1])
+    en = int(t[2])
+    nm = t[3]
+    if c not in genes:
+        genes[c] = []
+    genes[c].append((st, en, nm))
+
+for l in sys.stdin:
+    t = l.strip().split('\t')
+    acc = hg19(t[0])
+    st = int(t[1])
+    en = int(t[2])
+    hgvs = t[6]
+    for (st0, en0, nm) in genes.get(acc, []):
+        if st0 <= st and st <= en0:
+            print '\t'.join([nm, hgvs])
+            break
+        if st0 <= en and en <= en0:
+            print '\t'.join([nm, hgvs])
+            break

@@ -1,0 +1,15 @@
+#!/usr/bin/python
+
+import sys
+
+seen = set([])
+for l in sys.stdin:
+    t = l.split()
+    chrom = t[2]
+    st = t[4]
+    en = t[5]
+    nm = t[12]
+    if nm in seen:
+        continue
+    seen.add(nm)
+    print '\t'.join([chrom, st, en, nm])

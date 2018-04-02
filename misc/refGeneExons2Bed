@@ -1,0 +1,20 @@
+#!/usr/bin/python
+
+import sys
+
+seen = set([])
+for l in sys.stdin:
+    t = l.split()
+    chrom = t[2]
+    sts = t[9].split(',')
+    ens = t[10].split(',')
+    nm = t[12]
+    if nm in seen:
+        continue
+    seen.add(nm)
+    n = 0
+    for (st, en) in zip(sts, ens):
+        if len(st) == 0:
+            continue
+        n += 1
+        print '\t'.join([chrom, st, en, nm+'ex'+str(n)])
