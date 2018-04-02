@@ -12,6 +12,7 @@ Options:
     -N NUMBER       number of HGVSg variants to generate [default: 1]
     -S SEED         set a random number seed
     -t TYPES        comma separated list of variant types [default: sub,del,ins,delins,dup]
+    -T              produce output in a tabular form
     -v              produce progress messages
     -V              produce verbose output
 
@@ -117,6 +118,8 @@ bases = ['A','C','G','T']
 alts = {'A':['C','G','T'], 'C':['A','G','T'], 'G':['A','C','T'], 'T':['A','C','G']}
 
 def genVar(c, seq, s, e, ts, ds):
+    assert 0 <= s and s < len(seq)
+    assert s <= e and e < len(seq)
     f = ts.gen()
     if f == 'sub':
         p = random.randint(s, e)
@@ -234,6 +237,8 @@ def main(argv):
                 prog.set_description(c.ljust(maxC, ' '))
                 prog.update(0)
             curSeq = sf[c]
+        assert s < len(curSeq)
+        assert e <= len(curSeq)
         if prog is not None:
             #prog.set_description(progFmt % (c, m))
             prog.update(n)
@@ -242,7 +247,19 @@ def main(argv):
             print '# %s : %s' % (c, m)
         for j in xrange(n):
             v = genVar(c, curSeq, s, e, Tgen, Ds)
-            print str(v)
+            fmts = []
+            vals = []
+            if opts['-T']:
+                v.setSequenceFactory(sf)
+                wt = curSeq[v.range()[0]:v.range()[1]].upper()
+                mut = v.sequence()
+                if mut is None:
+                    mut = '*'
+                fmts += ['%s', '%d', '%d', '%d', '%s', '%s']
+                vals += [v.accession(), v.range()[0], v.range()[1], v.size(), wt, mut]
+            fmts += ['%s']
+            vals += [str(v)]
+            print '\t'.join(fmts) % tuple(vals)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
