@@ -6,6 +6,7 @@ mkdir -p ${wd}
 S=26
 
 v=$(zot hgvs-gen -g ~/data/hg19 -t delins -S ${S} etc/TP53-exons.bed)
+msg="wild-type delins ${v}"
 
 zot spikein -g ~/data/hg19 -b etc/TP53.bed -N 10000 -V 0.5 -S 19 -z ${wd}/reads
 
@@ -21,7 +22,7 @@ cat > ${wd}/rules.py << EOF
 EOF
 ./bin/check ${wd}/rules.py ${wd}/output.txt > ${wd}/result.txt
 
-echo "$0" $(cat ${wd}/result.txt) ${v}
+echo "$0" $(cat ${wd}/result.txt) ${msg}
 
 cleanup=yes
 if [ $(cat ${wd}/result.txt) == 'ACK' ] && [ ${cleanup} == 'yes' ]
