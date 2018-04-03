@@ -651,8 +651,6 @@ def findFairlySimpleAllele(K, D, lhs, mid, rhs, mx):
 
 def findAllele(K, mx, lx, lxp, rx, rxp, z):
     ll = z + lxp + rxp + 1 + K
-    print >> sys.stderr, 'findAllele', lxp, rxp, z, ll
-    #pth = interpolate(K, mx, lx, rx, ll)
     for pth in paths(K, mx, lx, rx, ll):
         seq = renderPath(K, pth)
         seq = seq[lxp+K:-(rxp+K)]
