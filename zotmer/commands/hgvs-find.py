@@ -899,7 +899,15 @@ def main(argv):
         h = itm['hgvs']
         v = makeHGVS(h)
         itm['var'] = v
-        bait = itm['lhsFlank'] + 'N' + itm['rhsFlank']
+        lhs = itm['lhsFlank']
+        rhs = itm['rhsFlank']
+        wt = itm['wtSeq']
+        mut = itm['mutSeq']
+        bait = [lhs, wt, rhs]
+        if mut is not None:
+            bait += ['N']
+            bait += [lhs, mut, rhs]
+        bait = ''.join(bait)
         n0 = cap.addBait(h, bait)
         assert n0 == n
 
