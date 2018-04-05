@@ -20,15 +20,8 @@ def sig(s):
         h = murmer(h, v)
     return h
 
-seen = {}
 for fn in sys.argv[1:]:
     with openFile(fn) as f:
         for rd in readFastq(f):
             rdId = rd[0].split()[0]
-            h = sig(rdId)
-            if h in seen:
-                assert seen[h] == rdId
-                continue
-            #seen.add(h)
-            seen[h] = rdId
-            print '%016x\t%s' % (h, rdId)
+            print rdId

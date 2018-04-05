@@ -6,8 +6,8 @@ Usage:
     zot hgvs-find [options] <index> <input>...
 
 Options:
-    -T BEDFILE      test regions at indexing time
     -X              index HGVS variants
+    -T              test variants for resolvability at indexing time
     -A ALPHA        alpha level for Kolmogorov-Smirnov test [default: 0.001]
     -B BINFUNC      binning function to use [default: none]
     -C MINCOV       minimum coverage to call an allele [default: 10]
@@ -856,12 +856,58 @@ def main(argv):
                 vx[acc] = []
             vx[acc].append(x)
 
+        chk = None
+        if opts['-T']:
+            chk = {}
+
         rs = []
         for (acc, vs) in vx.iteritems():
             for v in vs:
                 r = makeIndexedVariant(v, K, Wcap, Wval)
                 if r is not None:
                     rs.append(r)
+                if chk is not None:
+                    xs = kmersList(K, ''.join([r['lhsFlank'], r['wtSeq'], r['rhsFlank']]), True)
+                    for x in xs:
+                        if x not in chk:
+                            chk[x] = set([])
+                        chk[x].add(('wt', str(v)))
+                    if r['mutSeq'] is None:
+                        continue
+                    xs = kmersList(K, ''.join([r['lhsFlank'], r['mutSeq'], r['rhsFlank']]), True)
+                    for x in xs:
+                        if x not in chk:
+                            chk[x] = set([])
+                        chk[x].add(('mut', str(v)))
+
+        if chk is not None:
+            counts = dict([(x, 0) for x in chk.keys()])
+            for acc in refSeq2Hg19.keys():
+                if verbose:
+                    print >> sys.stderr, 'scanning', acc
+                seq = sf[acc]
+                for x in kmers(K, seq):
+                    if x in counts:
+                        counts[x] += 1
+            res = {}
+            seen = set([])
+            for x in counts.keys():
+                y = rc(K, x)
+                z = min(x,y)
+                if z in seen:
+                    continue
+                seen.add(z)
+                c = counts[x] + counts[y]
+                for (a,v) in chk[x]:
+                    if v not in res:
+                        res[v] = {}
+                    if a not in res[v]:
+                        res[v][a] = {}
+                    if c not in res[v][a]:
+                        res[v][a][c] = 0
+                    res[v][a][c] += 1
+            yaml.safe_dump(res, sys.stdout, default_flow_style=False)
+            return
 
         with open(opts['<index>'], 'w') as f:
             yaml.safe_dump(rs, f, default_flow_style=False)
