@@ -867,14 +867,14 @@ def main(argv):
                 if r is not None:
                     rs.append(r)
                 if chk is not None:
-                    xs = kmersList(K, ''.join([r['lhsFlank'], r['wtSeq'], r['rhsFlank']]), True)
+                    xs = kmersList(K, ''.join([r['lhsFlank'][-(K-1):], r['wtSeq'], r['rhsFlank'][:K-1]]), True)
                     for x in xs:
                         if x not in chk:
                             chk[x] = set([])
                         chk[x].add(('wt', str(v)))
                     if r['mutSeq'] is None:
                         continue
-                    xs = kmersList(K, ''.join([r['lhsFlank'], r['mutSeq'], r['rhsFlank']]), True)
+                    xs = kmersList(K, ''.join([r['lhsFlank'][-(K-1):], r['mutSeq'], r['rhsFlank'][:K-1]]), True)
                     for x in xs:
                         if x not in chk:
                             chk[x] = set([])

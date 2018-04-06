@@ -1,0 +1,18 @@
+#!/usr/bin/env pypy
+
+import sys
+import yaml
+
+for (hgvs, alleles) in yaml.load(open(sys.argv[1])).iteritems():
+    ok = True
+    wt0 = sum([count for (mult, count) in sorted(alleles['wt'].items())])
+    wt = sum([count for (mult, count) in sorted(alleles['wt'].items()) if mult > 1])
+    wtFrac = float(wt)/float(wt0)
+    mut0 = sum([count for (mult, count) in sorted(alleles['mut'].items())])
+    mut = sum([count for (mult, count) in sorted(alleles['mut'].items()) if mult > 0])
+    mutFrac = float(mut)/float(mut0)
+    if wtFrac > 0.2 or mutFrac > 0.2:
+        # print >> sys.stderr, hgvs, wt0, wt, wtFrac, mut0, mut, mutFrac
+        print >> sys.stderr, hgvs
+    else:
+        print >> sys.stdout, hgvs

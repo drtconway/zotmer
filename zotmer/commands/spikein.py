@@ -197,6 +197,8 @@ def main(argv):
                 p = float(t[0])
                 v = makeHGVS(t[1], sf)
                 a = v.accession()
+                if a in hg19ToRefSeq:
+                    a = hg19ToRefSeq[a]
                 if a not in mut:
                     mut[a] = []
                 mut[a].append((v,p))
