@@ -7,6 +7,7 @@ Usage:
 Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
+    -C INT          coverage cutoff value [default: 5]
     -v              produce verbose output
     -z              compress the output reads
 """
@@ -69,6 +70,11 @@ class SequenceFactory(object):
                     break
         return self.prevSeq
 
+def quant(xs, q):
+    z = len(xs)
+    i = int(q*z)
+    return xs[i]
+
 def flatten(xss):
     ys = []
     for xs in xss:
@@ -78,7 +84,7 @@ def flatten(xss):
 def hits(idx, K, xps):
     hc = 0
     mc = 0
-    hitKey = None
+    l = {}
     mx = {}
     hx = {}
     for (x,p) in xps:
@@ -93,43 +99,43 @@ def hits(idx, K, xps):
         for (z,q) in idx[x]:
             r = q - p
             k = (z,r)
-            if hitKey is None:
-                hitKey = k
-            elif hitKey != k:
-                return None
+            if k not in l:
+                l[k] = 0
+            l[k] += 1
             if x not in hx:
                 hx[x] = []
             hx[x].append(p)
 
-    if hitKey is None:
+    if len(l) == 0:
         return None
 
     pMin = min(flatten(hx.values()))
     pMax = max(flatten(hx.values()))
 
-    (z,r) = hitKey
-
-    qL = r + pMin
-    qR = r + pMax + K - 1
-
     pre = []
     aft = []
-    for (x, ps) in mx.items():
-        for p in ps:
-            if p < pMin:
-                pre.append((z, qL, p-pMin, x))
-            if p > pMax:
-                aft.append((z, qR, p-pMax, x))
+    for (z,r) in l.keys():
+        qL = r + pMin
+        qR = r + pMax + K - 1
+
+        for (x, ps) in mx.items():
+            for p in ps:
+                if p < pMin:
+                    pre.append((z, qL, p-pMin, x))
+                if p > pMax:
+                    aft.append((z, qR, p-pMax, x))
     pre.sort()
     aft.sort()
 
     if len(pre) == 0 and len(aft) == 0:
         return None
 
-
     return (pre, aft)
 
 def accumulateHits(hx, acc):
+    if hx is None:
+        return
+
     for vs in hx:
         for k in vs:
             (z,q,p,x) = k
@@ -222,42 +228,49 @@ def output(K, C, z, q, ps, pxc):
         return
     mp = min(ps)
 
-    #for p in ps:
-    #    pxc[p] = groupKmers(K, pxc[p])
+    K1 = K-1
 
     for (xs,cs) in contig(K, ps, pxc):
         assert len(xs) == len(cs)
-        while len(cs) > 0 and cs[-1] <= C:
-            xs.pop()
-            cs.pop()
+        if False: # Trim the ends
+            while len(cs) > 0 and cs[-1] <= C:
+                xs.pop()
+                cs.pop()
 
-        xs = xs[::-1]
-        cs = cs[::-1]
-        while len(cs) > 0 and cs[-1] <= C:
-            xs.pop()
-            cs.pop()
-        xs = xs[::-1]
-        cs = cs[::-1]
+            xs = xs[::-1]
+            cs = cs[::-1]
+            while len(cs) > 0 and cs[-1] <= C:
+                xs.pop()
+                cs.pop()
+            xs = xs[::-1]
+            cs = cs[::-1]
 
-        if len(xs) == 0:
+            if not all([c > C for c in cs]):
+                continue
+
+        cs.sort()
+        q1 = quant(cs, 0.1)
+        q5 = quant(cs, 0.5)
+        q9 = quant(cs, 0.9)
+
+        if q1 <= C:
             continue
-
-        if not all([c > C for c in cs]):
+        if len(xs) == 0:
             continue
 
         seq = renderPath(K, xs)
 
         if mp < 0:
             d = 'before'
-            seq = seq[:-(K-1)]
+            seq = seq[:-K1] + seq[-K1:].lower()
         else:
             d = 'after'
-            seq = seq[(K-1):]
+            seq = seq[:K1].lower() + seq[K1:]
 
         if len(seq) < K:
             continue
 
-        print '%s\t%d\t%s\t%s' % (z, q, d, seq)
+        print '%s\t%d\t%s\t%g\t%g\t%g\t%s' % (z, q, d, q1, q5, q9, seq)
 
     #for p in ps:
     #    w = ' ' * (p - mp)
@@ -272,6 +285,8 @@ def main(argv):
     verbose = opts['-v']
 
     K = int(opts['-k'])
+
+    C = int(opts['-C'])
 
     d = "."
     if opts['-g']:
@@ -296,6 +311,7 @@ def main(argv):
                 refIdx[x].append((nm,p))
 
     acc = {}
+    pile = {}
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, verbose=verbose):
         rdL = itm.reads[0]
         zL = len(rdL)
@@ -309,18 +325,14 @@ def main(argv):
         fwdRHits = hits(refIdx, K, fwdR)
         revRHits = hits(refIdx, K, revR)
 
-        if fwdLHits is not None or revRHits is not None:
-            if fwdLHits is not None:
-                accumulateHits(fwdLHits, acc)
-            if revRHits is not None:
-                accumulateHits(revRHits, acc)
-        if revLHits is not None or fwdRHits is not None:
-            if revLHits is not None:
-                accumulateHits(revLHits, acc)
-            if fwdRHits is not None:
-                accumulateHits(fwdRHits, acc)
-
-    C = 1
+        if fwdLHits is not None:
+            accumulateHits(fwdLHits, acc)
+        if revRHits is not None:
+            accumulateHits(revRHits, acc)
+        if revLHits is not None:
+            accumulateHits(revLHits, acc)
+        if fwdRHits is not None:
+            accumulateHits(fwdRHits, acc)
 
     for gk in sorted(acc.keys()):
         (z,q) = gk

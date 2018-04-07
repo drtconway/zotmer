@@ -2,23 +2,7 @@
 
 import sys
 
-from pykmer.basics import murmer
 from pykmer.file import openFile, readFastq
-
-def sig(s):
-    h = 17
-    v = 0
-    j = 0
-    for i in range(len(s)):
-        v = (v << 8) | ord(s[i])
-        j += 1
-        if j == 4:
-            h = murmer(h, v)
-            v = 0
-            j = 0
-    if j != 0:
-        h = murmer(h, v)
-    return h
 
 for fn in sys.argv[1:]:
     with openFile(fn) as f:
