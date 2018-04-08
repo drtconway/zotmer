@@ -38,6 +38,13 @@ from pykmer.misc import uniq
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19, Substitution
 from zotmer.library.rope import rope
 
+def normalizeAccession(acc):
+    if acc in refSeq2Hg19:
+        acc = refSeq2Hg19[acc]
+    if not acc.startswith('chr'):
+        acc = 'chr' + acc
+    return acc
+
 class SequenceFactory(object):
     def __init__(self, home):
         self.home = home
@@ -46,12 +53,8 @@ class SequenceFactory(object):
 
     def __getitem__(self, acc):
         if acc != self.prevAcc:
-            if acc not in refSeq2Hg19:
-                print >> sys.stderr, "accession %s not available." % (acc)
-            assert acc in refSeq2Hg19
-            h = refSeq2Hg19[acc]
-
-            with openFile(self.home + "/" + h + ".fa.gz") as f:
+            acc = normalizeAccession(acc)
+            with openFile(self.home + "/" + acc + ".fa.gz") as f:
                 for (nm,seq) in readFasta(f):
                     self.prevAcc = acc
                     self.prevSeq = seq
@@ -139,7 +142,7 @@ def readBED(f):
             first = False
             if t[0] == 'track' or t[0] =='browser':
                 continue
-        c = hg19ToRefSeq[t[0]]
+        c = normalizeAccession(t[0])
         s = int(t[1])
         e = int(t[2])
         n = None
@@ -185,9 +188,13 @@ def main(argv):
         zones = readBED(openFile(opts['-b']))
     else:
         zones = {}
-        for c in refSeq2Hg19.keys():
+        for c in refSeq2Hg19.values():
+            c = normalizeAccession(c)
             s = sf[c]
-            v = (1, len(s), refSeq2Hg19[c])
+            v = (1, len(s), c)
+            if c not in zones:
+                zones[c] = []
+            zones[c].append(v)
 
     mut = {}
     if opts['-m'] is not None:
@@ -236,6 +243,7 @@ def main(argv):
     vs = {}
     for s in vStrs:
         v = makeHGVS(s, sf)
+        print >> sys.stderr, str(v), normalizeAccession(v.accession())
         if v is None:
             print >> sys.stderr, 'unable to parse variant: %s', (s, )
             continue
@@ -243,7 +251,7 @@ def main(argv):
             n = v.size()
             seq = ''.join([random.choice(['A', 'C', 'G', 'T']) for i in range(n)])
             v.setSequence(seq)
-        a = v.accession()
+        a = normalizeAccession(v.accession())
         if a not in vs:
             vs[a] = []
         vs[a].append(v)
@@ -281,6 +289,9 @@ def main(argv):
         currC = None
         currSeq = None
         for (c,i) in sorted(zcs.keys()):
+            if prog is not None:
+                (zb, ze, nm) = zones[c][i]
+                prog.write('processing zone: %s/%d-%d' % (c,zb,ze))
             if c != currC:
                 if prog is not None:
                     prog.set_description(c.ljust(maxC, ' '))
@@ -290,6 +301,7 @@ def main(argv):
                 Z = len(seq)
                 currSeq = rope.atom(seq)
                 given = vs.get(c, [])
+                prog.write('with these variants: %s' % str([str(v) for v in given]))
                 if len(mut) > 0:
                     extra = []
                     for (m,p) in mut.get(c, []):

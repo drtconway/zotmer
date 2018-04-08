@@ -2,14 +2,13 @@
 zot alu-finder - find ALU insertion points
 
 Usage:
-    zot alu-finder [options] <regions> <output-prefix> <input>...
+    zot alu-finder [options] <regions> <input>...
 
 Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -C INT          coverage cutoff value [default: 5]
     -v              produce verbose output
-    -z              compress the output reads
 """
 
 import sys
