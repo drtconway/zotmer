@@ -1,0 +1,80 @@
+#!/usr/bin/env pypy
+
+import random
+import re
+import sys
+
+from pykmer.file import openFile, readFasta
+from zotmer.library import hgvs
+
+class SequenceFactory(object):
+    def __init__(self, home):
+        self.home = home
+        self.prevAcc = None
+        self.prevSeq = None
+
+    def __getitem__(self, acc):
+        if acc != self.prevAcc:
+            if acc in hgvs.refSeq2Hg19:
+                acc = hgvs.refSeq2Hg19[acc]
+            if not acc.startswith('chr'):
+                acc = 'chr' + acc
+
+            with openFile(self.home + "/" + acc + ".fa.gz") as f:
+                for (nm,seq) in readFasta(f):
+                    self.prevAcc = acc
+                    self.prevSeq = seq
+                    break
+        return self.prevSeq
+
+rcDict = {'A':'T', 'C':'G', 'G':'C', 'T':'A', 'N':'N'}
+
+def rc(seq):
+    r = []
+    for c in seq:
+        r.append(rcDict[c])
+    return ''.join(r[::-1])
+
+sf = SequenceFactory(sys.argv[1])
+
+pat = re.compile('^(AluY|AluS[a-z]|AluJ[0-9])$')
+
+alus = {}
+with open(sys.argv[2]) as f:
+    for l in f:
+        t = l.split()
+        ch = t[0]
+        st = int(t[1])
+        en = int(t[2])
+        nm = t[3]
+        fr = t[5]
+        if not pat.match(nm):
+            continue
+        if en - st < 75:
+            continue
+        if random.random() > 0.01:
+            continue
+        if nm not in alus:
+            alus[nm] = []
+        alus[nm].append((ch, st, en, fr))
+
+use = {}
+for nm in alus.keys():
+    for (ch, st, en, fr) in alus[nm]:
+        if ch not in use:
+            use[ch] = []
+        use[ch].append((nm, st, en, fr))
+
+res = []
+for ch in sorted(use.keys()):
+    print >> sys.stderr, ch, len(use[ch])
+    for (nm, st, en, fr) in use[ch]:
+        big = sf[ch]
+        seq = big[st-1:en].upper()
+        if fr == '-':
+            seq = rc(seq)
+        res.append((nm, seq))
+random.shuffle(res)
+for (nm, seq) in res:
+    print '>' + nm
+    print seq

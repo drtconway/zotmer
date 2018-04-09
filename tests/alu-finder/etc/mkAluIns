@@ -1,0 +1,29 @@
+#!/usr/bin/env pypy
+
+import random
+import sys
+
+from pykmer.file import openFile, readFasta
+
+random.seed(int(sys.argv[1]))
+
+rngs = []
+with openFile(sys.argv[2]) as f:
+    for l in f:
+        t = l.split()
+        v = (t[0], int(t[1]), int(t[2]), t[3])
+        rngs.append(v)
+
+with openFile(sys.argv[3]) as f:
+    seqs = list(readFasta(f))
+
+K = 25
+while True:
+    (ch, st, en, ex) = random.choice(rngs)
+    (nm, seq) = random.choice(seqs)
+    pos = random.randint(st, en)
+    if st + K <= pos and pos <= en - K:
+        break
+
+print >> sys.stderr, '%s\t%d\t%s\t%d\t%s' % (ch, pos, ex, pos - st, seq)
+print >> sys.stdout, '%s:g.%d_%dins%s' % (ch, pos, pos+1, seq)
