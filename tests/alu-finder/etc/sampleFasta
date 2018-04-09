@@ -1,0 +1,18 @@
+#!/usr/bin/env pypy
+
+import random
+import sys
+
+from pykmer.file import openFile, readFasta
+
+random.seed(int(sys.argv[1]))
+
+n = int(sys.argv[2])
+
+with openFile(sys.argv[3]) as f:
+    seqs = list(readFasta(f))
+
+random.shuffle(seqs)
+for (nm, seq) in seqs[:n]:
+    print '>' + nm
+    print seq
