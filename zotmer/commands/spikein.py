@@ -65,9 +65,9 @@ class MultiGen(object):
     def __init__(self, pcs):
         self.cum = []
         t = 0.0
-        for (p,c) in pcs:
+        for (p,v) in pcs:
             t += p
-            self.cum.append((t, c))
+            self.cum.append((t, v))
 
     def gen(self):
         u = random.random()
@@ -142,24 +142,161 @@ def readBED(f):
             first = False
             if t[0] == 'track' or t[0] =='browser':
                 continue
-        c = normalizeAccession(t[0])
+        ch = normalizeAccession(t[0])
         s = int(t[1])
         e = int(t[2])
         n = None
         if len(t) > 3:
             n = t[3]
         v = (s, e, n)
-        if c not in res:
-            res[c] = []
-        res[c].append(v)
-    for c in res.keys():
-        res[c].sort()
+        if ch not in res:
+            res[ch] = []
+        res[ch].append(v)
+    for ch in res.keys():
+        res[ch].sort()
     return res
 
-def liftover(vs, p):
-    for v in vs[::-1]:
-        p = v.liftover(p)
-    return p
+def applyBackgroundVariants(ch, given, popVars):
+    if len(popVars) == 0:
+        return given
+    if ch not in popVars:
+        return given
+
+    extra = []
+    for (m,p) in popVars[ch]:
+        if p < random.random():
+            continue
+        if len(extra) and extra[-1].overlaps(m):
+            continue
+        ok = True
+        for v in given:
+            if v.overlaps(m):
+                ok = False
+                break
+        if ok:
+            extra.append(m)
+    allOfThem = given + extra
+    allOfThem.sort()
+    return allOfThem
+
+def between(st, en, v):
+    """test if a variant lies within a range"""
+    r = v.range()
+    return all([st <= r[0], r[0] <= en, st <= r[1], r[1] <= en])
+
+class ReadMaker(object):
+    def __init__(self, **kwargs):
+        # Chromosome and Region of interest
+        #
+        self.chrom = kwargs['chrom']
+        self.zone = kwargs['zone']
+
+        # Read Length
+        #
+        self.L = kwargs['L']
+
+        # Insert Size
+        #
+        self.I = kwargs['I']
+
+        # Fragment relative std-dev (as a faction of insert size)
+        #
+        self.D = kwargs['D']
+
+        # List of *chromosome* variants
+        #
+        self.variants = kwargs['variants']
+
+        # Fasta or Fastq?
+        #
+        self.fasta = kwargs['fasta']
+
+        self.seqFac = kwargs['sf']
+        self.egen = kwargs['egen']
+
+    def prepareAllele(self):
+        (st, en, nm) = self.zone
+
+        # Select the variants that lie within this range.
+        #
+        ws = [v for v in self.variants if between(st, en, v)]
+        ws.sort(reverse=True)
+
+        seq = self.seqFac[self.chrom]
+        G = len(seq)
+
+        s0 = st
+        e0 = en
+        seq = rope.atom(seq)
+
+        for v in ws:
+            r = v.range()
+            l = r[1] - r[0]
+            e0 -= l
+            e0 += v.size()
+            seq = v.apply(seq)
+
+        self.seq = seq
+        self.sourceRange = (s0, e0)
+        self.quals = 'I' * self.L
+
+    def makeReadFromZone(self):
+        G = len(self.seq)
+
+        (s0, e0) = self.sourceRange
+
+        u = random.randint(s0, e0)
+
+        fl = int(random.gauss(self.I, self.I*self.D))
+        fl = max(fl, self.L + self.L // 2)
+
+        if u - fl < 0:
+            u = fl
+        if u + fl > G:
+            u = G - fl
+
+        assert 0 <= u and u + fl <= G
+
+        if random.random() < 0.5:
+            rp1 = u
+            rp2 = u + fl - self.L
+        else:
+            rp1 = u - fl
+            rp2 = u - self.L
+
+        r1 = self.seq[rp1:rp1+self.L]
+        r2 = self.seq[rp2:rp2+self.L]
+
+        if random.random() < 0.5:
+            s = '+'
+            (r1, r2) = (r1, revComp(r2))
+        else:
+            s = '-'
+            (r1, r2) = (r2, revComp(r1))
+
+        (r1, e1) = mutate(self.egen, r1)
+        (r2, e2) = mutate(self.egen, r2)
+
+        ch = self.chrom
+        (st, en, nm) = self.zone
+        out1 = []
+        out2 = []
+        if self.fasta:
+            out1 += ['>' + ' '.join([ch, str(st), str(en), nm, str(rp1), str(fl), s] + e1)]
+            out1 += [r1]
+
+            out2 += ['>' + ' '.join([ch, str(st), str(en), nm, str(rp2), str(fl), s] + e2)]
+            out2 += [r2]
+        else:
+            out1 += ['@%s:%d-%d %s %d %d %s %s' % (ch, st, en, nm, rp1, fl, s, ';'.join(e1))]
+            out1 += [r1]
+            out1 += ['+']
+            out1 += [self.quals]
+            out2 += ['@%s:%d-%d %s %d %d %s %s' % (ch, st, en, nm, rp2, fl, s, ';'.join(e2))]
+            out2 += [r2]
+            out2 += ['+']
+            out2 += [self.quals]
+        return ('\n'.join(out1), '\n'.join(out2))
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
@@ -188,50 +325,55 @@ def main(argv):
         zones = readBED(openFile(opts['-b']))
     else:
         zones = {}
-        for c in refSeq2Hg19.values():
-            c = normalizeAccession(c)
-            s = sf[c]
-            v = (1, len(s), c)
-            if c not in zones:
-                zones[c] = []
-            zones[c].append(v)
+        for ch in refSeq2Hg19.values():
+            ch = normalizeAccession(ch)
+            s = sf[ch]
+            v = (1, len(s), ch)
+            if ch not in zones:
+                zones[ch] = []
+            zones[ch].append(v)
 
-    mut = {}
+    popVars = {}
     if opts['-m'] is not None:
         with openFile(opts['-m']) as f:
             for l in f:
                 t = l.split()
                 p = float(t[0])
                 v = makeHGVS(t[1], sf)
-                a = v.accession()
-                if a in hg19ToRefSeq:
-                    a = hg19ToRefSeq[a]
-                if a not in mut:
-                    mut[a] = []
-                mut[a].append((v,p))
-    for c in mut.keys():
-        mut[c].sort()
+                a = normalizeAccession(v.accession())
+                if a not in popVars:
+                    popVars[a] = []
+                popVars[a].append((v,p))
+    for ch in popVars.keys():
+        popVars[ch].sort()
 
-    zps = []
     t = 0
-    maxC = 0
-    for c in zones.keys():
-        maxC = max(maxC, len(c))
-        for i in range(len(zones[c])):
-            (s, e, _n) = zones[c][i]
+    chMax = 0
+    for ch in zones.keys():
+        chMax = max(chMax, len(ch))
+        for zone in zones[ch]:
+            (s, e, _n) = zone
             l = e - s + 1
-            zps.append((l, (c,i)))
             t += l
 
     if opts['-v']:
         print >> sys.stderr, 'mean coverage = %g' % (float(N*L)/float(t),)
 
-    zps = [(float(l)/float(t), c) for (l,c) in zps]
-    zgen = MultiGen(zps)
-    zcs = dict([(c,0) for (p,c) in zps])
+    zoneCounts = {}
+    zoneProbs = []
+    for ch in zones.keys():
+        zoneCounts[ch] = {}
+        for zone in zones[ch]:
+            zoneCounts[ch][zone] = 0
+            (s, e, _n) = zone
+            l = e - s + 1
+            zoneProbs.append((float(l)/float(t), (ch, zone)))
+    zgen = MultiGen(zoneProbs)
     for n in xrange(N):
-        c = zgen.gen()
-        zcs[c] += 1
+        (ch,z) = zgen.gen()
+        if z not in zoneCounts[ch]:
+            zoneCounts[ch][z] = 0
+        zoneCounts[ch][z] += 1
 
     vStrs = opts['<variant>']
     if opts['-f'] is not None:
@@ -240,7 +382,7 @@ def main(argv):
                 s = l.strip()
                 vStrs.append(s)
 
-    vs = {}
+    allVars = {}
     for s in vStrs:
         v = makeHGVS(s, sf)
         print >> sys.stderr, str(v), normalizeAccession(v.accession())
@@ -252,12 +394,12 @@ def main(argv):
             seq = ''.join([random.choice(['A', 'C', 'G', 'T']) for i in range(n)])
             v.setSequence(seq)
         a = normalizeAccession(v.accession())
-        if a not in vs:
-            vs[a] = []
-        vs[a].append(v)
+        if a not in allVars:
+            allVars[a] = []
+        allVars[a].append(v)
 
     numOverlaps = 0
-    for xs in vs.values():
+    for xs in allVars.values():
         xs.sort()
         for i in range(len(xs)):
             for j in range(i + 1, len(xs)):
@@ -274,7 +416,6 @@ def main(argv):
     egen = GeomVarSource(E)
 
     fasta = False
-    quals = 'I' * L
 
     logfile = None
     if opts['-l']:
@@ -285,101 +426,32 @@ def main(argv):
     if opts['-z']:
         sfx = '.gz'
     with openFile(pfx + '_1.fastq' + sfx, 'w') as out1, openFile(pfx + '_2.fastq' + sfx, 'w') as out2:
-        wtSeq = None
-        currC = None
-        currSeq = None
-        for (c,i) in sorted(zcs.keys()):
+        for ch in zones.keys():
             if prog is not None:
-                (zb, ze, nm) = zones[c][i]
-                prog.write('processing zone: %s/%d-%d' % (c,zb,ze))
-            if c != currC:
-                if prog is not None:
-                    prog.set_description(c.ljust(maxC, ' '))
-                    prog.update(0)
-                currC = c
-                seq = sf[c]
-                Z = len(seq)
-                currSeq = rope.atom(seq)
-                given = vs.get(c, [])
-                prog.write('with these variants: %s' % str([str(v) for v in given]))
-                if len(mut) > 0:
-                    extra = []
-                    for (m,p) in mut.get(c, []):
-                        if p < random.random():
-                            continue
-                        if len(extra) and extra[-1].overlaps(m):
-                            continue
-                        ok = True
-                        for v in given:
-                            if v.overlaps(m):
-                                ok = False
-                                break
-                        if ok:
-                            extra.append(m)
-                    given += extra
-                    given.sort()
-                    if prog is not None and len(given) > 0:
-                        prog.write("spiking in the following variants:")
-                        for v in given:
-                            prog.write('\t' + str(v))
-                for v in given[::-1]:
-                    currSeq = v.apply(currSeq)
-                wtSeq = rope.atom(sf[c])
+                prog.set_description(ch.ljust(chMax, ' '))
+                prog.update(0)
+            chVars = []
+            if ch in allVars:
+                chVars = allVars[ch]
 
-            n = zcs[(c,i)]
-            (zb, ze, nm) = zones[c][i]
-            if prog is not None:
-                prog.update(n)
-            for j in xrange(n):
-                u0 = random.randint(zb, ze)
-                if random.random() < V:
-                    u = liftover(vs.get(c, []), u0)
-                    ss = currSeq
-                else:
-                    u = u0
-                    ss = wtSeq
+            wtVars = applyBackgroundVariants(ch, [], popVars)
+            mutVars = applyBackgroundVariants(ch, chVars, popVars)
 
-                fl = int(random.gauss(I, I*D))
-                fl = max(fl, L + L // 2)
+            for zone in zones[ch]:
+                wtMaker = ReadMaker(chrom=ch, zone=zone, L=L, I=I, D=D, variants=wtVars, fasta=fasta, egen=egen, sf=sf)
+                wtMaker.prepareAllele()
 
-                if random.random() < 0.5:
-                    rp1 = u
-                    rp2 = u + fl - L
-                else:
-                    rp1 = u - fl
-                    rp2 = u - L
+                mutMaker = ReadMaker(chrom=ch, zone=zone, L=L, I=I, D=D, variants=mutVars, fasta=fasta, egen=egen, sf=sf)
+                mutMaker.prepareAllele()
 
-                r1 = ss[rp1:rp1+L]
-                r2 = ss[rp2:rp2+L]
-
-                if random.random() < 0.5:
-                    s = '+'
-                    r2 = revComp(r2)
-                else:
-                    s = '-'
-                    tmp = r2
-                    r2 = revComp(r1)
-                    r1 = tmp
-
-                (r1, e1) = mutate(egen, r1)
-                (r2, e2) = mutate(egen, r2)
-
-                #print >> out1, '\t'.join([c, str(zb), str(ze), nm, str(rp1), str(fl), s, r1] + e1)
-                #print >> out2, '\t'.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s, r2] + e2)
-                if fasta:
-                    print >> out1, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp1), str(fl), s] + e1)
-                    print >> out1, r1
-                    print >> out2, '>' + ' '.join([c, str(zb), str(ze), nm, str(rp2), str(fl), s] + e2)
-                    print >> out2, r2
-                else:
-                    print >> out1, '@%s:%d-%d %s %d %d %s %s' % (c, zb, ze, nm, rp1, fl, s, ';'.join(e1))
-                    print >> out1, r1
-                    print >> out1, '+'
-                    print >> out1, quals
-                    print >> out2, '@%s:%d-%d %s %d %d %s %s' % (c, zb, ze, nm, rp2, fl, s, ';'.join(e2))
-                    print >> out2, r2
-                    print >> out2, '+'
-                    print >> out2, quals
+                for i in xrange(zoneCounts[ch][zone]) :
+                    u = random.random()
+                    if u > V:
+                        (rd1,rd2) = wtMaker.makeReadFromZone()
+                    else:
+                        (rd1,rd2) = mutMaker.makeReadFromZone()
+                    print >> out1, rd1
+                    print >> out2, rd2
 
     if prog is not None:
         prog.__exit__(None, None, None)
