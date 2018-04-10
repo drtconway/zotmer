@@ -1,0 +1,17 @@
+#!/usr/bin/env pypy
+
+import sys
+from pykmer.file import openFile, readFastq
+
+wanted = set([])
+with openFile(sys.argv[1]) as f:
+    for l in f:
+        t = l.split()
+        wanted.add(t[0])
+
+for fn in sys.argv[2:]:
+    with openFile(fn) as f:
+        for rd in readFastq(f):
+            rId = rd[0].split()[0]
+            if rId in wanted:
+                print '\n'.join(rd)
