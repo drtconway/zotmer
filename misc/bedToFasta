@@ -1,0 +1,35 @@
+#!/usr/bin/env pypy
+
+import sys
+from pykmer.file import openFile, readFasta
+from zotmer.library.hgvs import refSeq2Hg19
+
+root = sys.argv[1]
+def chrToPath(ch):
+    if ch in refSeq2Hg19:
+        ch = refSeq2Hg19[ch]
+    if not ch.startswith('chr'):
+        ch = 'chr' + ch
+    return root + '/' + ch + '.fa.gz'
+
+bed = []
+with openFile(sys.argv[2]) as f:
+    for l in f:
+        t = l.split()
+        ch = t[0]
+        st = int(t[1])
+        en = int(t[2])
+        nm = t[3]
+        bed.append((ch, st, en, nm))
+bed.sort()
+
+prevCh = None
+chSeq = None
+for (ch, st, en, nm) in bed:
+    if ch != prevCh:
+        prevCh = ch
+        with openFile(chrToPath(ch)) as f:
+            for (_nm, seq) in readFasta(f):
+                chSeq = seq
+    print '>' + nm
+    print chSeq[st-1:en]
