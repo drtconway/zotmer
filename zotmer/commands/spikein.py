@@ -27,6 +27,7 @@ in position order, and overlapping variants won't work.
 """
 
 import math
+import os.path
 import random
 import sys
 
@@ -54,7 +55,10 @@ class SequenceFactory(object):
     def __getitem__(self, acc):
         if acc != self.prevAcc:
             acc = normalizeAccession(acc)
-            with openFile(self.home + "/" + acc + ".fa.gz") as f:
+            pth = self.home + '/' + acc + '.fa'
+            if not os.path.exists(pth):
+                pth = pth + '.gz'
+            with openFile(pth) as f:
                 for (nm,seq) in readFasta(f):
                     self.prevAcc = acc
                     self.prevSeq = seq
@@ -83,12 +87,19 @@ class MultiGen(object):
 
 class GeomVarSource(object):
     def __init__(self, p):
-        self.l1mp = math.log1p(-p)
+        self.p = p
+        self.l1mp = None
+        if p > 0:
+            self.l1mp = math.log1p(-p)
 
     def __call__(self):
+        if self.p == 0:
+            return 0
         return int(math.log(random.random()) / self.l1mp)
 
     def make(self, lo, hi):
+        if self.p == 0:
+            return []
         r = []
         j = lo
         i = 0
@@ -184,6 +195,19 @@ def between(st, en, v):
     r = v.range()
     return all([st <= r[0], r[0] <= en, st <= r[1], r[1] <= en])
 
+def overlaps(st, en, v):
+    """test if a variant lies within a range"""
+    r = v.range()
+    if st <= r[0] and r[0] <= en:
+        return True
+    if st <= r[1] and r[1] <= en:
+        return True
+    if r[0] <= st and st <= r[1]:
+        return True
+    if r[0] <= en and en <= r[1]:
+        return True
+    return False
+
 class ReadMaker(object):
     def __init__(self, **kwargs):
         # Chromosome and Region of interest
@@ -219,7 +243,7 @@ class ReadMaker(object):
 
         # Select the variants that lie within this range.
         #
-        ws = [v for v in self.variants if between(st, en, v)]
+        ws = [v for v in self.variants if overlaps(st, en, v)]
         ws.sort(reverse=True)
 
         seq = self.seqFac[self.chrom]
@@ -273,6 +297,7 @@ class ReadMaker(object):
         else:
             s = '-'
             (r1, r2) = (r2, revComp(r1))
+            (rp1,rp2) = (rp2,rp1)
 
         (r1, e1) = mutate(self.egen, r1)
         (r2, e2) = mutate(self.egen, r2)
@@ -385,7 +410,6 @@ def main(argv):
     allVars = {}
     for s in vStrs:
         v = makeHGVS(s, sf)
-        print >> sys.stderr, str(v), normalizeAccession(v.accession())
         if v is None:
             print >> sys.stderr, 'unable to parse variant: %s', (s, )
             continue
@@ -445,6 +469,8 @@ def main(argv):
                 mutMaker.prepareAllele()
 
                 for i in xrange(zoneCounts[ch][zone]) :
+                    if prog is not None:
+                        prog.update(1)
                     u = random.random()
                     if u > V:
                         (rd1,rd2) = wtMaker.makeReadFromZone()

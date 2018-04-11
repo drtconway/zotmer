@@ -8,6 +8,8 @@ Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -C INT          coverage cutoff value [default: 5]
+    -U FILE         dump unpaired reads
+    -W INT          window either side of regions in include in scan [default: 0]
     -v              produce verbose output
 """
 
@@ -221,62 +223,118 @@ def contig(K, ps, pxc):
         ctgs = nctgs
     return ctgs
 
+class ResultCollator(object):
+    def __init__(self):
+        self.res = {}
 
-def output(K, C, z, q, ps, pxc):
-    if len(ps) == 0:
-        return
-    mp = min(ps)
+    def collate(self, K, C, z, q, ps, pxc):
+        if len(ps) == 0:
+            return
+        mp = min(ps)
 
-    K1 = K-1
+        K1 = K-1
 
-    for (xs,cs) in contig(K, ps, pxc):
-        assert len(xs) == len(cs)
-        if False: # Trim the ends
-            while len(cs) > 0 and cs[-1] <= C:
-                xs.pop()
-                cs.pop()
+        for (xs,cs) in contig(K, ps, pxc):
+            assert len(xs) == len(cs)
+            if False: # Trim the ends
+                while len(cs) > 0 and cs[-1] <= C:
+                    xs.pop()
+                    cs.pop()
 
-            xs = xs[::-1]
-            cs = cs[::-1]
-            while len(cs) > 0 and cs[-1] <= C:
-                xs.pop()
-                cs.pop()
-            xs = xs[::-1]
-            cs = cs[::-1]
+                xs = xs[::-1]
+                cs = cs[::-1]
+                while len(cs) > 0 and cs[-1] <= C:
+                    xs.pop()
+                    cs.pop()
+                xs = xs[::-1]
+                cs = cs[::-1]
 
-            if not all([c > C for c in cs]):
+                if not all([c > C for c in cs]):
+                    continue
+
+            cs.sort()
+            q1 = quant(cs, 0.1)
+            q5 = quant(cs, 0.5)
+            q9 = quant(cs, 0.9)
+
+            if q1 <= C:
+                continue
+            if len(xs) == 0:
                 continue
 
-        cs.sort()
-        q1 = quant(cs, 0.1)
-        q5 = quant(cs, 0.5)
-        q9 = quant(cs, 0.9)
+            r = {}
+            r['q10'] = q1
+            r['q50'] = q5
+            r['q90'] = q9
 
-        if q1 <= C:
-            continue
-        if len(xs) == 0:
-            continue
+            seq = renderPath(K, xs)
 
-        seq = renderPath(K, xs)
+            if mp < 0:
+                d = -1
+                r['side'] = 'before'
+                r['seq'] = seq[:-K1]
+                r['anc'] = seq[-K1:].lower()
+            else:
+                d = 1
+                r['side'] = 'after'
+                r['seq'] = seq[K1:]
+                r['anc'] = seq[:K1].lower() 
 
-        if mp < 0:
-            d = 'before'
-            seq = seq[:-K1] + seq[-K1:].lower()
-        else:
-            d = 'after'
-            seq = seq[:K1].lower() + seq[K1:]
+            if len(r['seq']) < K:
+                continue
 
-        if len(seq) < K:
-            continue
+            if z not in self.res:
+                self.res[z] = {}
+            if q not in self.res[z]:
+                self.res[z][q] = {}
+            if d not in self.res[z][q]:
+                self.res[z][q][d] = []
+            self.res[z][q][d].append(r)
 
-        print '%s\t%d\t%s\t%g\t%g\t%g\t%s' % (z, q, d, q1, q5, q9, seq)
+    def output(self, out):
+        hdrShown = False
+        for z in sorted(self.res.keys()):
+            Z = self.res[z]
+            for q0 in sorted(Z.keys()):
+                Q0 = Z[q0]
+                if 1 not in Q0:
+                    continue
+                q1 = q0+1
+                if q1 not in Z:
+                    continue
+                Q1 = Z[q1]
+                if -1 not in Q1:
+                    continue
 
-    #for p in ps:
-    #    w = ' ' * (p - mp)
-    #    for (x,c) in sorted(xcs.items()):
-    #        if c < C:
-    #            continue
-    #        print '%s\t%d\t%d\t%d\t%s%s' % (z, q, p, c, w, render(K, x))
+                for i in range(len(Q0[1])):
+                    b = Q0[1][i]
+                    for j in range(len(Q1[-1])):
+                        a = Q1[-1][j]
+
+                        hdr = ['accession', 'after', 'before']
+                        fmt = ['%s', '%d', '%d']
+                        val = [z, q0+1, q1+1]
+
+                        hdr += ['lhsQ10', 'lhsQ50', 'lhsQ90']
+                        fmt += ['%d', '%d', '%d']
+                        val += [b['q10'], b['q50'], b['q90']]
+
+                        hdr += ['rhsQ10', 'rhsQ50', 'rhsQ90']
+                        fmt += ['%d', '%d', '%d']
+                        val += [a['q10'], a['q50'], a['q90']]
+
+                        hdr += ['lhsAnc', 'rhsAnc']
+                        fmt += ['%s', '%s']
+                        val += [b['anc'], a['anc']]
+
+                        hdr += ['lhsSeq', 'rhsSeq']
+                        fmt += ['%s', '%s']
+                        val += [b['seq'], a['seq']]
+                        
+                        if not hdrShown:
+                            print >> out, '\t'.join(hdr)
+                            hdrShown = True
+                        print >> out, '\t'.join(fmt) % tuple(val)
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
@@ -286,6 +344,8 @@ def main(argv):
     K = int(opts['-k'])
 
     C = int(opts['-C'])
+
+    W = int(opts['-W'])
 
     d = "."
     if opts['-g']:
@@ -301,16 +361,18 @@ def main(argv):
         accSeq = sf[acc]
         for (s, e, nm) in zones:
             zoneIdx[nm] = (acc, s, e)
-            seq = accSeq[s:e]
+            seq = accSeq[s-W:e+W]
             for (x,p) in kmersWithPosList(K, seq, False):
-                #p = s + p - 1
-                p -= 1
+                p -= 1 + W
                 if x not in refIdx:
                     refIdx[x] = []
                 refIdx[x].append((nm,p))
 
+    dumper = None
+    if opts['-U']:
+        dumper = open(opts['-U'], 'w')
+
     acc = {}
-    pile = {}
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, verbose=verbose):
         rdL = itm.reads[0]
         zL = len(rdL)
@@ -324,15 +386,31 @@ def main(argv):
         fwdRHits = hits(refIdx, K, fwdR)
         revRHits = hits(refIdx, K, revR)
 
+        dump = 0
+
         if fwdLHits is not None:
             accumulateHits(fwdLHits, acc)
+            if revRHits is None:
+                dump |= 2
         if revRHits is not None:
             accumulateHits(revRHits, acc)
+            if fwdLHits is None:
+                dump |= 1
         if revLHits is not None:
             accumulateHits(revLHits, acc)
+            if fwdRHits is None:
+                dump |= 2
         if fwdRHits is not None:
             accumulateHits(fwdRHits, acc)
+            if revLHits is None:
+                dump |= 1
 
+        if dump & 1 and dumper is not None:
+            print >> dumper, '\n'.join(rdL)
+        if dump & 2 and dumper is not None:
+            print >> dumper, '\n'.join(rdL)
+
+    res = ResultCollator()
     for gk in sorted(acc.keys()):
         (z,q) = gk
         pxc = acc[gk]
@@ -346,12 +424,14 @@ def main(argv):
                 ls.append(p)
 
         if q > 0:
-            output(K, C, z, q, ls, pxc)
+            res.collate(K, C, z, q, ls, pxc)
 
         (a,s,e) = zoneIdx[z]
         zl = e - s - K
         if q < zl:
-            output(K, C, z, q, rs, pxc)
+            res.collate(K, C, z, q, rs, pxc)
+
+    res.output(sys.stdout)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

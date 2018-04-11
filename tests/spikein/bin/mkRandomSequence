@@ -1,0 +1,7 @@
+#!/usr/bin/python
+
+import random
+import sys
+
+random.seed(int(sys.argv[1]))
+print ''.join([random.choice(['A', 'C', 'G', 'T']) for i in xrange(int(sys.argv[2]))])
