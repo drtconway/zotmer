@@ -1,6 +1,13 @@
 import sys
 from pykmer.file import openFile, readFasta, readFastq
 
+rcDict = {'A':'T', 'C':'G', 'G':'C', 'T':'A'}
+def rc(s):
+    r = []
+    for c in s:
+        r.append(rcDict[c])
+    return ''.join(r[::-1])
+
 root = sys.argv[1]
 
 chs = set([])
@@ -18,16 +25,36 @@ with openFile(sys.argv[2]) as f:
 chs = dict([(ch, list(readFasta(open(root + '/' + ch + '.fa')))[0][1]) for ch in sorted(chs)])
 
 for fn in sys.argv[3:]:
-    fst = fn.endswith('_1.fastq')
+    if fn.endswith('_1.fastq'):
+        end = 1
+    else:
+        end = -1
     with openFile(fn) as f:
+
+        n = 0
         for rd in readFastq(f):
+            n += 1
             t = rd[0].split()
             nm = t[1]
             pos = int(t[2])
             fragLen = int(t[3])
-            strand = t[4]
+            if t[4] == '+':
+                strand = 1
+            else:
+                strand = -1
             rdSeq = rd[1]
-            rdLen = len(rdSeq)
+            L = len(rdSeq)
             ch = bed[nm][0]
-            frag = chs[ch][pos-1:pos+fragLen]
-            print ch, strand, rdSeq, frag
+            frag = chs[ch][pos:pos+fragLen]
+
+            if strand == -1:
+                frag = rc(frag)
+
+            if end == 1:
+                rdFrag = frag[:L]
+            else:
+                rdFrag = frag[-L:]
+
+            if rdSeq != rdFrag:
+                print n, end, pos, fragLen, strand, rdSeq
+                print n, end, pos, fragLen, strand, rdFrag

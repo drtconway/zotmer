@@ -281,23 +281,16 @@ class ReadMaker(object):
 
         assert 0 <= u and u + fl <= G
 
-        if random.random() < 0.5:
-            rp1 = u
-            rp2 = u + fl - self.L
-        else:
-            rp1 = u - fl
-            rp2 = u - self.L
-
-        r1 = self.seq[rp1:rp1+self.L]
-        r2 = self.seq[rp2:rp2+self.L]
+        frag = self.seq[u:u+fl]
 
         if random.random() < 0.5:
             s = '+'
-            (r1, r2) = (r1, revComp(r2))
         else:
             s = '-'
-            (r1, r2) = (r2, revComp(r1))
-            (rp1,rp2) = (rp2,rp1)
+            frag = revComp(frag)
+
+        r1 = frag[:self.L]
+        r2 = frag[-self.L:]
 
         (r1, e1) = mutate(self.egen, r1)
         (r2, e2) = mutate(self.egen, r2)
@@ -307,17 +300,17 @@ class ReadMaker(object):
         out1 = []
         out2 = []
         if self.fasta:
-            out1 += ['>' + ' '.join([ch, str(st), str(en), nm, str(rp1), str(fl), s] + e1)]
+            out1 += ['>' + ' '.join([ch, str(st), str(en), nm, str(u), str(fl), s] + e1)]
             out1 += [r1]
 
-            out2 += ['>' + ' '.join([ch, str(st), str(en), nm, str(rp2), str(fl), s] + e2)]
+            out2 += ['>' + ' '.join([ch, str(st), str(en), nm, str(u), str(fl), s] + e2)]
             out2 += [r2]
         else:
-            out1 += ['@%s:%d-%d %s %d %d %s %s' % (ch, st, en, nm, rp1, fl, s, ';'.join(e1))]
+            out1 += ['@%s:%d-%d %s %d %d %s %s' % (ch, st, en, nm, u, fl, s, ';'.join(e1))]
             out1 += [r1]
             out1 += ['+']
             out1 += [self.quals]
-            out2 += ['@%s:%d-%d %s %d %d %s %s' % (ch, st, en, nm, rp2, fl, s, ';'.join(e2))]
+            out2 += ['@%s:%d-%d %s %d %d %s %s' % (ch, st, en, nm, u, fl, s, ';'.join(e2))]
             out2 += [r2]
             out2 += ['+']
             out2 += [self.quals]
