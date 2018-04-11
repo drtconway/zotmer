@@ -1,0 +1,21 @@
+#!/usr/bin/env pypy
+
+import sys
+from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.hgvs import makeHGVS
+from zotmer.library.rope import rope
+
+ref = {}
+with openFile(sys.argv[1]) as f:
+    for (nm, seq) in readFasta(f):
+        ref[nm] = seq
+
+hgvs = sys.argv[2]
+
+v = makeHGVS(hgvs)
+
+s = rope.atom(ref[v.accession()])
+r = v.apply(s)
+
+print '>' + v.accession()
+print r[:]
