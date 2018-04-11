@@ -1,3 +1,5 @@
+#!/usr/bin/env pypy
+
 import sys
 from pykmer.file import openFile, readFasta, readFastq
 
@@ -24,6 +26,7 @@ with openFile(sys.argv[2]) as f:
 
 chs = dict([(ch, list(readFasta(open(root + '/' + ch + '.fa')))[0][1]) for ch in sorted(chs)])
 
+errs = 0
 for fn in sys.argv[3:]:
     if fn.endswith('_1.fastq'):
         end = 1
@@ -56,5 +59,11 @@ for fn in sys.argv[3:]:
                 rdFrag = frag[-L:]
 
             if rdSeq != rdFrag:
+                errs += 1
                 print n, end, pos, fragLen, strand, rdSeq
                 print n, end, pos, fragLen, strand, rdFrag
+
+if errs == 0:
+    sys.exit(0)
+else:
+    sys.exit(1)
