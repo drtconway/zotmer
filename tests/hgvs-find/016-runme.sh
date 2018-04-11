@@ -14,14 +14,14 @@ msg="one-among-many ${v}"
 zot spikein -g ~/data/hg19 -b etc/panel.bed -N 400000 -V 0.5 -S ${S} -z ${wd}/reads ${v}
 zot hgvs-find -o ${wd}/output.txt ${wd}/all.idx ${wd}/reads_*.fastq.gz
 cat > ${wd}/rules.py << EOF
-- if: n == '$m'
+- if: n == '0'
   then:
     - res == 'wt/mut'
     - 0.3 <= float(wtVaf) and float(wtVaf) <= 0.7
     - 0.3 <= float(mutVaf) and float(mutVaf) <= 0.7
 - if: n != '0'
   then:
-    - res == 'wt'
+    - res == 'wt' or res == 'null'
 EOF
 ./bin/check ${wd}/rules.py ${wd}/output.txt > ${wd}/result.txt
 
