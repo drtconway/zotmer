@@ -13,4 +13,9 @@ echo "chr13 1024 4098 NONE" > ${wd}/none.bed
 
 zot spikein -e 0 -g ${wd} -b ${wd}/none.bed -N 100 -S $(($S + 1)) ${wd}/reads
 
-./bin/checkReads ${wd} ${wd}/none.bed ${wd}/reads_*
+if ./bin/checkReads ${wd}/chr13.fa ${wd}/reads_* > ${wd}/errors.txt
+then
+    echo "ACK" > ${wd}/result.txt
+else
+    echo "NAK" > ${wd}/result.txt
+fi

@@ -10,24 +10,13 @@ def rc(s):
         r.append(rcDict[c])
     return ''.join(r[::-1])
 
-root = sys.argv[1]
-
-chs = set([])
-bed = {}
-with openFile(sys.argv[2]) as f:
-    for l in f:
-        t = l.split()
-        ch = t[0]
-        st = int(t[1])
-        en = int(t[2])
-        nm = t[3]
-        bed[nm] = (ch, st, en)
-        chs.add(ch)
-
-chs = dict([(ch, list(readFasta(open(root + '/' + ch + '.fa')))[0][1]) for ch in sorted(chs)])
+ref = []
+with openFile(sys.argv[1]) as f:
+    for (nm,seq) in readFasta(f):
+        ref.append((nm, seq))
 
 errs = 0
-for fn in sys.argv[3:]:
+for fn in sys.argv[2:]:
     if fn.endswith('_1.fastq'):
         end = 1
     else:
@@ -38,7 +27,6 @@ for fn in sys.argv[3:]:
         for rd in readFastq(f):
             n += 1
             t = rd[0].split()
-            nm = t[1]
             pos = int(t[2])
             fragLen = int(t[3])
             if t[4] == '+':
@@ -47,21 +35,25 @@ for fn in sys.argv[3:]:
                 strand = -1
             rdSeq = rd[1]
             L = len(rdSeq)
-            ch = bed[nm][0]
-            frag = chs[ch][pos:pos+fragLen]
 
-            if strand == -1:
-                frag = rc(frag)
+            found = False
+            for (ch, seq) in ref:
+                frag = seq[pos:pos+fragLen]
 
-            if end == 1:
-                rdFrag = frag[:L]
-            else:
-                rdFrag = frag[-L:]
+                if strand == -1:
+                    frag = rc(frag)
 
-            if rdSeq != rdFrag:
+                if end == 1:
+                    rdFrag = frag[:L]
+                else:
+                    rdFrag = frag[-L:]
+
+                if rdSeq == rdFrag:
+                    found = True
+                    break
+            if not found:
                 errs += 1
                 print n, end, pos, fragLen, strand, rdSeq
-                print n, end, pos, fragLen, strand, rdFrag
 
 if errs == 0:
     sys.exit(0)
