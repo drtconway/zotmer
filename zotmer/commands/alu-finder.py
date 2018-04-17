@@ -8,6 +8,7 @@ Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -C INT          coverage cutoff value [default: 5]
+    -L INT          Minimum length of spurs [default: 50]
     -V FLOAT        minimum relative frequency for insertions [default: 0.05]
     -v              produce verbose output
 """
@@ -243,6 +244,8 @@ def main(argv):
 
     C = int(opts['-C'])
 
+    L = int(opts['-L'])
+
     V = float(opts['-V'])
 
     d = "."
@@ -323,8 +326,7 @@ def main(argv):
         scoredAft = {}
         for p in sorted(aft.keys()):
             for spur in aft[p]:
-                #if len(spur) < 2*K:
-                if len(spur) < 10:
+                if len(spur) < L:
                     continue
                 for (q, xs, v) in shiftForwardSpur(ref, p, spur):
                     q += K-1
