@@ -8,20 +8,35 @@ Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -C INT          coverage cutoff value [default: 5]
-    -U FILE         dump unpaired reads
-    -W INT          window either side of regions in include in scan [default: 0]
     -v              produce verbose output
 """
 
+import os.path
 import sys
 
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmersWithPosList, kmersWithPosLists, rc, render
+from pykmer.basics import ham, kmersWithPosList, kmersWithPosLists, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19
 from zotmer.library.reads import reads
+
+def succ(K, x):
+    M = (1 << (2*K)) - 1
+    y0 = (x << 2) & M
+    r = []
+    for i in range(4):
+        r.append(y0 + i)
+    return r
+
+def pred(K, x):
+    S = 2*(K-1)
+    y0 = x >> 2
+    r = []
+    for i in range(4):
+        r.append(y0 + (i << S))
+    return r
 
 def outputFile(nm):
     if nm is None:
@@ -64,7 +79,11 @@ class SequenceFactory(object):
             else:
                 h = acc
 
-            with openFile(self.home + "/" + h + ".fa.gz") as f:
+            pth = self.home + '/' + h + '.fa'
+            if not os.path.exists(pth):
+                pth += '.gz'
+
+            with openFile(pth) as f:
                 for (nm,seq) in readFasta(f):
                     self.prevAcc = acc
                     self.prevSeq = seq
@@ -82,56 +101,37 @@ def flatten(xss):
         ys += xs
     return ys
 
-def hits(idx, K, xps):
-    hc = 0
-    mc = 0
-    l = {}
-    mx = {}
-    hx = {}
+def hits(idx, K, xps, hx = None):
+    loc = {}
     for (x,p) in xps:
         p -= 1
         if x not in idx:
-            mc += 1
-            if x not in mx:
-                mx[x] = []
-            mx[x].append(p)
             continue
-        hc += 1
         for (z,q) in idx[x]:
             r = q - p
             k = (z,r)
-            if k not in l:
-                l[k] = 0
-            l[k] += 1
-            if x not in hx:
-                hx[x] = []
-            hx[x].append(p)
+            if k not in loc:
+                loc[k] = 0
+            loc[k] += 1
 
-    if len(l) == 0:
+    if len(loc) == 0:
         return None
 
-    pMin = min(flatten(hx.values()))
-    pMax = max(flatten(hx.values()))
-
-    pre = []
-    aft = []
-    for (z,r) in l.keys():
-        qL = r + pMin
-        qR = r + pMax + K - 1
-
-        for (x, ps) in mx.items():
-            for p in ps:
-                if p < pMin:
-                    pre.append((z, qL, p-pMin, x))
-                if p > pMax:
-                    aft.append((z, qR, p-pMax, x))
-    pre.sort()
-    aft.sort()
-
-    if len(pre) == 0 and len(aft) == 0:
-        return None
-
-    return (pre, aft)
+    if hx is None:
+        hx = {}
+    for k in loc.keys():
+        (z,r) = k
+        if z not in hx:
+            hx[z] = {}
+        for (x,p) in xps:
+            p -= 1
+            q = r + p
+            if q not in hx[z]:
+                hx[z][q] = {}
+            if x not in hx[z][q]:
+                hx[z][q][x] = 0
+            hx[z][q][x] += 1
+    return hx
 
 def accumulateHits(hx, acc):
     if hx is None:
@@ -149,49 +149,6 @@ def accumulateHits(hx, acc):
                 acc[gk][p][x] = 0
             acc[gk][p][x] += 1
 
-def groupKmers(K, xcs):
-    M = 10
-    if len(xcs) == 1:
-        return xcs
-    grps = []
-    yns = []
-    for (x,c) in xcs.items():
-        if c < M:
-            yns.append((x,c))
-        else:
-            grps.append([x,[(x,c)]])
-    for (y,n) in yns:
-        used = False
-        for i in range(len(grps)):
-            x = grps[i][0]
-            d = ham(y,x)
-            if d < 2:
-                grps[i][1].append((y,n))
-                used = True
-                break
-        if not used:
-            grps.append([y,[(y,n)]])
-
-    res = {}
-    for (x,yns) in grps:
-        bs = [[0,0,0,0] for j in range(K)]
-        for (y,n) in yns:
-            for j in range(K):
-                bs[j][(y >> (2*j))&3] += n
-        m = None
-        y = 0
-        for j in range(K):
-            vs = [(bs[j][b],b) for b in range(4)]
-            vs.sort(reverse=True)
-            b = vs[0][1]
-            y |= b << (2*j)
-            if m is None:
-                m = vs[0][0]
-            else:
-                m = min(m, vs[0][0])
-        res[y] = m
-    return res
-
 def follow(K, x, y):
     K1 = K - 1
     M1 = (1 << (2*K1)) - 1
@@ -204,6 +161,103 @@ def renderPath(K, xs):
     for x in xs[1:]:
         r.append("ACGT"[x&3])
     return ''.join(r)
+
+def forwardSpurs(K, ref, Z):
+    for p0 in sorted(ref.keys()):
+        spurs = [[ref[p0]]]
+        short = []
+        p = p0 + 1
+        while p in Z and len(spurs) > 0:
+            spurs1 = []
+            for spur in spurs:
+                x = spur[-1]
+                ext = False
+                for (y,c) in Z[p].items():
+                    if follow(K, x, y):
+                        if p in ref and ref[p] == y:
+                            continue
+                        spurs1.append(spur + [y])
+                        ext = True
+                if not ext:
+                    short.append(spur)
+            spurs = spurs1
+            p += 1
+        yield (p0, sorted(short + spurs))
+
+def reverseSpurs(K, ref, Z):
+    for p0 in sorted(ref.keys()):
+        spurs = [[ref[p0]]]
+        short = []
+        p = p0 - 1
+        while p in Z and len(spurs) > 0:
+            spurs1 = []
+            for spur in spurs:
+                x = spur[0]
+                ext = False
+                for (y,c) in Z[p].items():
+                    if follow(K, y, x):
+                        if p in ref and ref[p] == y:
+                            continue
+                        spurs1.append([y] + spur)
+                        ext = True
+                if not ext:
+                    short.append(spur)
+            spurs = spurs1
+            p -= 1
+        yield (p0, sorted(short + spurs))
+
+def sig(xs):
+    assert len(xs) > 0
+    h = xs[0]
+    for x in xs[1:]:
+        h = murmer(x, h)
+    return h
+
+def shiftForwardSpur(ref, p, spur):
+    i = 0
+    while i < 5:
+        yield (p, spur, i)
+        i += 1
+        p -= 1
+        if p not in ref:
+            break
+        spur = [ref[p]] + spur
+
+def shiftReverseSpur(ref, p, spur):
+    i = 0
+    while i < 5:
+        yield (p, spur, i)
+        i += 1
+        p += 1
+        if p not in ref:
+            break
+        spur = spur + [ref[p]]
+
+def contigs(K, Z, p0):
+    ctgs = []
+    for (x,c) in Z[p0].items():
+        if c < 10:
+            continue
+        ctgs.append(([x],[c]))
+
+    short = []
+    pi = p0 + 1
+    while pi in Z:
+        nctgs = []
+        for ctg in ctgs:
+            y = ctg[0][-1]
+            ext = False
+            for (x,c) in Z[pi].items():
+                if c < 10:
+                    continue
+                if follow(K, y, x):
+                    ext = True
+                    nctgs.append((ctg[0] + [x], ctg[1] + [c]))
+            if not ext:
+                short.append(ctg)
+        ctgs = nctgs
+        pi += 1
+    return ctgs
 
 def contig(K, ps, pxc):
     ctgs = []
@@ -252,10 +306,10 @@ class ResultCollator(object):
                 if not all([c > C for c in cs]):
                     continue
 
-            cs.sort()
-            q1 = quant(cs, 0.1)
-            q5 = quant(cs, 0.5)
-            q9 = quant(cs, 0.9)
+            scs = sorted(cs)
+            q1 = quant(scs, 0.1)
+            q5 = quant(scs, 0.5)
+            q9 = quant(scs, 0.9)
 
             if q1 <= C:
                 continue
@@ -263,6 +317,7 @@ class ResultCollator(object):
                 continue
 
             r = {}
+            r['cnts'] = cs
             r['q10'] = q1
             r['q50'] = q5
             r['q90'] = q9
@@ -280,8 +335,11 @@ class ResultCollator(object):
                 r['seq'] = seq[K1:]
                 r['anc'] = seq[:K1].lower() 
 
-            if len(r['seq']) < K:
+            if len(r['seq']) < 10:
                 continue
+
+            #if len(r['seq']) < K:
+            #    continue
 
             if z not in self.res:
                 self.res[z] = {}
@@ -290,6 +348,15 @@ class ResultCollator(object):
             if d not in self.res[z][q]:
                 self.res[z][q][d] = []
             self.res[z][q][d].append(r)
+
+    def dump(self, out):
+        for z in sorted(self.res.keys()):
+            Z = self.res[z]
+            for q in sorted(Z.keys()):
+                Q = Z[q]
+                for s in sorted(Q.keys()):
+                    for v in Q[s]:
+                        print '%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s' % (z, q, v['side'], v['q10'], v['q50'], v['q90'], v['anc'], v['seq'], ','.join(map(str, v['cnts'])))
 
     def output(self, out):
         hdrShown = False
@@ -345,8 +412,6 @@ def main(argv):
 
     C = int(opts['-C'])
 
-    W = int(opts['-W'])
-
     d = "."
     if opts['-g']:
         d = opts['-g']
@@ -355,83 +420,112 @@ def main(argv):
     with openFile(opts['<regions>']) as f:
         R = readBED(f)
 
+    refTbl = {}
     refIdx = {}
     zoneIdx = {}
     for (acc, zones) in R.items():
         accSeq = sf[acc]
         for (s, e, nm) in zones:
             zoneIdx[nm] = (acc, s, e)
-            seq = accSeq[s-W:e+W]
+            seq = accSeq[s-1:e]
+            if nm not in refTbl:
+                refTbl[nm] = {}
             for (x,p) in kmersWithPosList(K, seq, False):
-                p -= 1 + W
+                p -= 1
+                refTbl[nm][p] = x
                 if x not in refIdx:
                     refIdx[x] = []
                 refIdx[x].append((nm,p))
-
-    dumper = None
-    if opts['-U']:
-        dumper = open(opts['-U'], 'w')
 
     acc = {}
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, verbose=verbose):
         rdL = itm.reads[0]
         zL = len(rdL)
         (fwdL, revL) = kmersWithPosLists(K, rdL[1])
-        fwdLHits = hits(refIdx, K, fwdL)
-        revLHits = hits(refIdx, K, revL)
+        fwdLHits = hits(refIdx, K, fwdL, acc)
+        revLHits = hits(refIdx, K, revL, acc)
 
         rdR = itm.reads[1]
         zR = len(rdR)
         (fwdR, revR) = kmersWithPosLists(K, rdR[1])
-        fwdRHits = hits(refIdx, K, fwdR)
-        revRHits = hits(refIdx, K, revR)
+        fwdRHits = hits(refIdx, K, fwdR, acc)
+        revRHits = hits(refIdx, K, revR, acc)
 
-        dump = 0
+    killZ = set([])
+    for z in acc.keys():
+        killP = set([])
+        for p in acc[z].keys():
+            killX = set([])
+            vv = {}
+            for x in acc[z][p].keys():
+                y = x >> 2
+                if y not in vv:
+                    vv[y] = []
+                vv[y].append((x, acc[z][p][x]))
+            for vs in vv.values():
+                vt = 0.05 * sum([c for (x,c) in vs])
+                for (x,c) in vs:
+                    if c < vt or c < C:
+                        killX.add(x)
+            #for x in acc[z][p].keys():
+            #    if acc[z][p][x] < C:
+            #        killX.add(x)
+            for x in killX:
+                del acc[z][p][x]
+            if len(acc[z][p]) == 0:
+                killP.add(p)
+        for p in killP:
+            del acc[z][p]
+        if len(acc[z]) == 0:
+            killZ.add(z)
+    for z in killZ:
+        del acc[z]
 
-        if fwdLHits is not None:
-            accumulateHits(fwdLHits, acc)
-            if revRHits is None:
-                dump |= 2
-        if revRHits is not None:
-            accumulateHits(revRHits, acc)
-            if fwdLHits is None:
-                dump |= 1
-        if revLHits is not None:
-            accumulateHits(revLHits, acc)
-            if fwdRHits is None:
-                dump |= 2
-        if fwdRHits is not None:
-            accumulateHits(fwdRHits, acc)
-            if revLHits is None:
-                dump |= 1
+    print '\t'.join(['accession', 'after', 'before', 'shift', 'lhsAnc', 'rhsAnc', 'lhsSeq', 'rhsSeq'])
+    for z in sorted(acc.keys()):
+        Z = acc[z]
+        ref = refTbl[z]
+        aft = dict(forwardSpurs(K, ref, Z))
+        bef = dict(reverseSpurs(K, ref, Z))
 
-        if dump & 1 and dumper is not None:
-            print >> dumper, '\n'.join(rdL)
-        if dump & 2 and dumper is not None:
-            print >> dumper, '\n'.join(rdL)
+        print >> sys.stderr, z, len(aft), len(bef)
 
-    res = ResultCollator()
-    for gk in sorted(acc.keys()):
-        (z,q) = gk
-        pxc = acc[gk]
-        ps = pxc.keys()
-        ls = []
-        rs = []
-        for p in sorted(ps):
-            if p > 0:
-                rs.append(p)
-            else:
-                ls.append(p)
+        scoredAft = {}
+        for p in sorted(aft.keys()):
+            for spur in aft[p]:
+                #if len(spur) < 2*K:
+                if len(spur) < 10:
+                    continue
+                for (q, xs, v) in shiftForwardSpur(ref, p, spur):
+                    q += K-1
+                    if q not in scoredAft:
+                        scoredAft[q] = []
+                    seq = renderPath(K, xs)
+                    anc = seq[:K]
+                    ins = seq[K:]
+                    scoredAft[q].append((v, anc, ins))
 
-        if q > 0:
-            res.collate(K, C, z, q, ls, pxc)
+        scoredBef = {}
+        for p in sorted(bef.keys()):
+            for spur in bef[p]:
+                if len(spur) < K:
+                    continue
+                for (q, xs, v) in shiftReverseSpur(ref, p, spur):
+                    if q not in scoredBef:
+                        scoredBef[q] = []
+                    seq = renderPath(K, xs)
+                    anc = seq[-K:]
+                    ins = seq[:-K]
+                    scoredBef[q].append((v, anc, ins))
 
-        (a,s,e) = zoneIdx[z]
-        zl = e - s - K
-        if q < zl:
-            res.collate(K, C, z, q, rs, pxc)
-
-    res.output(sys.stdout)
+        for p0 in sorted(scoredAft.keys()):
+            p1 = p0 + 1
+            if p1 not in scoredBef:
+                continue
+            for (aftV, aftAnc, aftIns) in scoredAft[p0]:
+                for (befV, befAnc, befIns) in scoredBef[p1]:
+                    v = aftV + befV
+                    print '%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s' % (z, p0, p1, v, aftAnc, befAnc, aftIns, befIns)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

@@ -25,6 +25,6 @@ cat > ${wd}/rules.py << EOF
 - "'${se}'.startswith(lhsSeq)"
 - "'${se}'.endswith(rhsSeq)"
 EOF
-./bin/check ${wd}/rules.py ${wd}/output.txt > ${wd}/result.txt
+./bin/check ${wd}/rules.py 1 ${wd}/output.txt > ${wd}/result.txt
 
 echo "$0" $(cat ${wd}/result.txt) ${msg}
