@@ -8,6 +8,7 @@ Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -C INT          coverage cutoff value [default: 5]
+    -V FLOAT        minimum relative frequency for insertions [default: 0.05]
     -v              produce verbose output
 """
 
@@ -233,176 +234,6 @@ def shiftReverseSpur(ref, p, spur):
             break
         spur = spur + [ref[p]]
 
-def contigs(K, Z, p0):
-    ctgs = []
-    for (x,c) in Z[p0].items():
-        if c < 10:
-            continue
-        ctgs.append(([x],[c]))
-
-    short = []
-    pi = p0 + 1
-    while pi in Z:
-        nctgs = []
-        for ctg in ctgs:
-            y = ctg[0][-1]
-            ext = False
-            for (x,c) in Z[pi].items():
-                if c < 10:
-                    continue
-                if follow(K, y, x):
-                    ext = True
-                    nctgs.append((ctg[0] + [x], ctg[1] + [c]))
-            if not ext:
-                short.append(ctg)
-        ctgs = nctgs
-        pi += 1
-    return ctgs
-
-def contig(K, ps, pxc):
-    ctgs = []
-
-    p0 = ps[0]
-    for (x,c) in pxc[p0].items():
-        ctgs.append(([x],[c]))
-
-    for i in range(1, len(ps)):
-        pi = ps[i]
-        nctgs = []
-        for ctg in ctgs:
-            y = ctg[0][-1]
-            for (x,c) in pxc[pi].items():
-                if follow(K, y, x):
-                    nctgs.append((ctg[0] + [x], ctg[1] + [c]))
-        ctgs = nctgs
-    return ctgs
-
-class ResultCollator(object):
-    def __init__(self):
-        self.res = {}
-
-    def collate(self, K, C, z, q, ps, pxc):
-        if len(ps) == 0:
-            return
-        mp = min(ps)
-
-        K1 = K-1
-
-        for (xs,cs) in contig(K, ps, pxc):
-            assert len(xs) == len(cs)
-            if False: # Trim the ends
-                while len(cs) > 0 and cs[-1] <= C:
-                    xs.pop()
-                    cs.pop()
-
-                xs = xs[::-1]
-                cs = cs[::-1]
-                while len(cs) > 0 and cs[-1] <= C:
-                    xs.pop()
-                    cs.pop()
-                xs = xs[::-1]
-                cs = cs[::-1]
-
-                if not all([c > C for c in cs]):
-                    continue
-
-            scs = sorted(cs)
-            q1 = quant(scs, 0.1)
-            q5 = quant(scs, 0.5)
-            q9 = quant(scs, 0.9)
-
-            if q1 <= C:
-                continue
-            if len(xs) == 0:
-                continue
-
-            r = {}
-            r['cnts'] = cs
-            r['q10'] = q1
-            r['q50'] = q5
-            r['q90'] = q9
-
-            seq = renderPath(K, xs)
-
-            if mp < 0:
-                d = -1
-                r['side'] = 'before'
-                r['seq'] = seq[:-K1]
-                r['anc'] = seq[-K1:].lower()
-            else:
-                d = 1
-                r['side'] = 'after'
-                r['seq'] = seq[K1:]
-                r['anc'] = seq[:K1].lower() 
-
-            if len(r['seq']) < 10:
-                continue
-
-            #if len(r['seq']) < K:
-            #    continue
-
-            if z not in self.res:
-                self.res[z] = {}
-            if q not in self.res[z]:
-                self.res[z][q] = {}
-            if d not in self.res[z][q]:
-                self.res[z][q][d] = []
-            self.res[z][q][d].append(r)
-
-    def dump(self, out):
-        for z in sorted(self.res.keys()):
-            Z = self.res[z]
-            for q in sorted(Z.keys()):
-                Q = Z[q]
-                for s in sorted(Q.keys()):
-                    for v in Q[s]:
-                        print '%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s' % (z, q, v['side'], v['q10'], v['q50'], v['q90'], v['anc'], v['seq'], ','.join(map(str, v['cnts'])))
-
-    def output(self, out):
-        hdrShown = False
-        for z in sorted(self.res.keys()):
-            Z = self.res[z]
-            for q0 in sorted(Z.keys()):
-                Q0 = Z[q0]
-                if 1 not in Q0:
-                    continue
-                q1 = q0+1
-                if q1 not in Z:
-                    continue
-                Q1 = Z[q1]
-                if -1 not in Q1:
-                    continue
-
-                for i in range(len(Q0[1])):
-                    b = Q0[1][i]
-                    for j in range(len(Q1[-1])):
-                        a = Q1[-1][j]
-
-                        hdr = ['accession', 'after', 'before']
-                        fmt = ['%s', '%d', '%d']
-                        val = [z, q0+1, q1+1]
-
-                        hdr += ['lhsQ10', 'lhsQ50', 'lhsQ90']
-                        fmt += ['%d', '%d', '%d']
-                        val += [b['q10'], b['q50'], b['q90']]
-
-                        hdr += ['rhsQ10', 'rhsQ50', 'rhsQ90']
-                        fmt += ['%d', '%d', '%d']
-                        val += [a['q10'], a['q50'], a['q90']]
-
-                        hdr += ['lhsAnc', 'rhsAnc']
-                        fmt += ['%s', '%s']
-                        val += [b['anc'], a['anc']]
-
-                        hdr += ['lhsSeq', 'rhsSeq']
-                        fmt += ['%s', '%s']
-                        val += [b['seq'], a['seq']]
-                        
-                        if not hdrShown:
-                            print >> out, '\t'.join(hdr)
-                            hdrShown = True
-                        print >> out, '\t'.join(fmt) % tuple(val)
-
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
@@ -411,6 +242,8 @@ def main(argv):
     K = int(opts['-k'])
 
     C = int(opts['-C'])
+
+    V = float(opts['-V'])
 
     d = "."
     if opts['-g']:
@@ -463,13 +296,10 @@ def main(argv):
                     vv[y] = []
                 vv[y].append((x, acc[z][p][x]))
             for vs in vv.values():
-                vt = 0.05 * sum([c for (x,c) in vs])
+                vt = V * sum([c for (x,c) in vs])
                 for (x,c) in vs:
                     if c < vt or c < C:
                         killX.add(x)
-            #for x in acc[z][p].keys():
-            #    if acc[z][p][x] < C:
-            #        killX.add(x)
             for x in killX:
                 del acc[z][p][x]
             if len(acc[z][p]) == 0:
