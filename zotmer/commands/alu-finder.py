@@ -9,6 +9,8 @@ Options:
     -g PATH         directory of FASTQ reference sequences
     -C INT          coverage cutoff value [default: 5]
     -L INT          Minimum length of spurs [default: 50]
+    -r              produce raw spurs
+    -S INT          Maximum distance to shift spurs [default: 5]
     -V FLOAT        minimum relative frequency for insertions [default: 0.05]
     -v              produce verbose output
 """
@@ -135,22 +137,6 @@ def hits(idx, K, xps, hx = None):
             hx[z][q][x] += 1
     return hx
 
-def accumulateHits(hx, acc):
-    if hx is None:
-        return
-
-    for vs in hx:
-        for k in vs:
-            (z,q,p,x) = k
-            gk = (z,q)
-            if gk not in acc:
-                acc[gk] = {}
-            if p not in acc[gk]:
-                acc[gk][p] = {}
-            if x not in acc[gk][p]:
-                acc[gk][p][x] = 0
-            acc[gk][p][x] += 1
-
 def follow(K, x, y):
     K1 = K - 1
     M1 = (1 << (2*K1)) - 1
@@ -166,19 +152,24 @@ def renderPath(K, xs):
 
 def forwardSpurs(K, ref, Z):
     for p0 in sorted(ref.keys()):
-        spurs = [[ref[p0]]]
+        x0 = ref[p0]
+        if p0 not in Z or x0 not in Z[p0]:
+            continue
+        c0 = Z[p0][x0]
+
         short = []
+        spurs = [[(x0, c0)]]
         p = p0 + 1
         while p in Z and len(spurs) > 0:
             spurs1 = []
             for spur in spurs:
-                x = spur[-1]
+                x = spur[-1][0]
                 ext = False
                 for (y,c) in Z[p].items():
                     if follow(K, x, y):
                         if p in ref and ref[p] == y:
                             continue
-                        spurs1.append(spur + [y])
+                        spurs1.append(spur + [(y,c)])
                         ext = True
                 if not ext:
                     short.append(spur)
@@ -188,19 +179,24 @@ def forwardSpurs(K, ref, Z):
 
 def reverseSpurs(K, ref, Z):
     for p0 in sorted(ref.keys()):
-        spurs = [[ref[p0]]]
+        x0 = ref[p0]
+        if p0 not in Z or x0 not in Z[p0]:
+            continue
+        c0 = Z[p0][x0]
+
         short = []
+        spurs = [[(x0,c0)]]
         p = p0 - 1
         while p in Z and len(spurs) > 0:
             spurs1 = []
             for spur in spurs:
-                x = spur[0]
+                x = spur[0][0]
                 ext = False
                 for (y,c) in Z[p].items():
                     if follow(K, y, x):
                         if p in ref and ref[p] == y:
                             continue
-                        spurs1.append([y] + spur)
+                        spurs1.append([(y,c)] + spur)
                         ext = True
                 if not ext:
                     short.append(spur)
@@ -215,25 +211,33 @@ def sig(xs):
         h = murmer(x, h)
     return h
 
-def shiftForwardSpur(ref, p, spur):
+def shiftForwardSpur(ref, Z, S, p, spur):
     i = 0
-    while i < 5:
+    while i < S:
         yield (p, spur, i)
         i += 1
         p -= 1
         if p not in ref:
             break
-        spur = [ref[p]] + spur
+        x = ref[p]
+        if p not in Z or x not in Z[p]:
+            break
+        c = Z[p][x]
+        spur = [(x,c)] + spur
 
-def shiftReverseSpur(ref, p, spur):
+def shiftReverseSpur(ref, Z, S, p, spur):
     i = 0
-    while i < 5:
+    while i < S:
         yield (p, spur, i)
         i += 1
         p += 1
         if p not in ref:
             break
-        spur = spur + [ref[p]]
+        x = ref[p]
+        if p not in Z or x not in Z[p]:
+            break
+        c = Z[p][x]
+        spur = spur + [(x,c)]
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
@@ -245,6 +249,10 @@ def main(argv):
     C = int(opts['-C'])
 
     L = int(opts['-L'])
+
+    raw = opts['-r']
+
+    S = int(opts['-S'])
 
     V = float(opts['-V'])
 
@@ -268,6 +276,7 @@ def main(argv):
                 refTbl[nm] = {}
             for (x,p) in kmersWithPosList(K, seq, False):
                 p -= 1
+                p += s
                 refTbl[nm][p] = x
                 if x not in refIdx:
                     refIdx[x] = []
@@ -314,50 +323,83 @@ def main(argv):
     for z in killZ:
         del acc[z]
 
-    print '\t'.join(['accession', 'after', 'before', 'shift', 'lhsAnc', 'rhsAnc', 'lhsSeq', 'rhsSeq'])
+    if raw:
+        print '\t'.join(['chrom', 'pos', 'side', 'label', 'anchor', 'insSeq'])
+    else:
+        print '\t'.join(['chrom', 'after', 'before', 'label', 'rhsShift', 'lhsShift', 'lhsAnc', 'rhsAnc', 'lhsSeq', 'rhsSeq'])
+
     for z in sorted(acc.keys()):
+        (ch, st, en) = zoneIdx[z]
+
         Z = acc[z]
         ref = refTbl[z]
         aft = dict(forwardSpurs(K, ref, Z))
         bef = dict(reverseSpurs(K, ref, Z))
 
-        print >> sys.stderr, z, len(aft), len(bef)
-
         scoredAft = {}
         for p in sorted(aft.keys()):
+            if p+K-1 == en:
+                continue
+
             for spur in aft[p]:
+
                 if len(spur) < L:
                     continue
-                for (q, xs, v) in shiftForwardSpur(ref, p, spur):
-                    q += K-1
-                    if q not in scoredAft:
-                        scoredAft[q] = []
+
+                if raw:
+                    (xs, cs) = zip(*spur)
                     seq = renderPath(K, xs)
                     anc = seq[:K]
                     ins = seq[K:]
-                    scoredAft[q].append((v, anc, ins))
+                    print '%s\t%d\t%s\t%s\t%s\t%s\t%s' % (ch, p+K-1, 'after', z, anc, ins, ','.join(map(str, cs)))
+                    continue
+
+                for (q, xcs, v) in shiftForwardSpur(ref, Z, S, p, spur):
+                    q += K-1
+                    if q not in scoredAft:
+                        scoredAft[q] = []
+                    (xs, cs) = zip(*xcs)
+                    seq = renderPath(K, xs)
+                    anc = seq[:K]
+                    ins = seq[K:]
+                    scoredAft[q].append((v, anc, ins, cs))
 
         scoredBef = {}
         for p in sorted(bef.keys()):
+            if p == st:
+                continue
+
             for spur in bef[p]:
-                if len(spur) < K:
+                if len(spur) < L:
                     continue
-                for (q, xs, v) in shiftReverseSpur(ref, p, spur):
-                    if q not in scoredBef:
-                        scoredBef[q] = []
+
+                if raw:
+                    (xs, cs) = zip(*spur)
                     seq = renderPath(K, xs)
                     anc = seq[-K:]
                     ins = seq[:-K]
-                    scoredBef[q].append((v, anc, ins))
+                    print '%s\t%d\t%s\t%s\t%s\t%s\t%s' % (ch, p, 'before', z, anc, ins, ','.join(map(str, cs)))
+                    continue
+
+                for (q, xcs, v) in shiftReverseSpur(ref, Z, S, p, spur):
+                    if q not in scoredBef:
+                        scoredBef[q] = []
+                    (xs, cs) = zip(*xcs)
+                    seq = renderPath(K, xs)
+                    anc = seq[-K:]
+                    ins = seq[:-K]
+                    scoredBef[q].append((v, anc, ins, cs))
 
         for p0 in sorted(scoredAft.keys()):
             p1 = p0 + 1
             if p1 not in scoredBef:
                 continue
-            for (aftV, aftAnc, aftIns) in scoredAft[p0]:
-                for (befV, befAnc, befIns) in scoredBef[p1]:
+            for (aftV, aftAnc, aftIns, aftCov) in scoredAft[p0]:
+                for (befV, befAnc, befIns, befCov) in scoredBef[p1]:
+                    if befAnc in aftIns or aftAnc in befIns:
+                        continue
                     v = aftV + befV
-                    print '%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s' % (z, p0, p1, v, aftAnc, befAnc, aftIns, befIns)
+                    print '%s\t%d\t%d\t%s\t%d\t%d\t%s\t%s\t%s\t%s' % (ch, p0, p1, z, aftV, befV, aftAnc, befAnc, aftIns, befIns)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
