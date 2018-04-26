@@ -8,7 +8,7 @@ Options:
     -k K            value of k to use [default: 25]
     -g PATH         directory of FASTQ reference sequences
     -C INT          coverage cutoff value [default: 5]
-    -L INT          Minimum length of spurs [default: 50]
+    -L INT          Minimum length of spurs [default: 29]
     -r              produce raw spurs
     -S INT          Maximum distance to shift spurs [default: 5]
     -V FLOAT        minimum relative frequency for insertions [default: 0.05]
