@@ -6,6 +6,7 @@ seen = set([])
 for l in sys.stdin:
     t = l.split()
     chrom = t[2]
+    strand = t[3]
     sts = t[9].split(',')
     ens = t[10].split(',')
     nm = t[12]
@@ -17,4 +18,4 @@ for l in sys.stdin:
         if len(st) == 0:
             continue
         n += 1
-        print '\t'.join([chrom, st, en, nm+'ex'+str(n)])
+        print '\t'.join([chrom, st, en, nm+'ex'+str(n), strand])
