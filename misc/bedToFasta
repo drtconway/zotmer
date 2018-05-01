@@ -32,4 +32,4 @@ for (ch, st, en, nm) in bed:
             for (_nm, seq) in readFasta(f):
                 chSeq = seq
     print '>' + nm
-    print chSeq[st-1:en]
+    print chSeq[st:en]

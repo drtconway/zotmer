@@ -46,6 +46,19 @@ class kmerPosIndex(object):
             return []
         return self.idx[x]
 
+    def simpleHits(self, xps):
+        loc = {}
+        for (x,p) in xps:
+            if x not in self.idx:
+                continue
+            for (z,q) in self.idx[x]:
+                if z not in loc:
+                    loc[z] = {}
+                if q not in loc[z]:
+                    loc[z][q] = 0
+                loc[z][q] += 1
+        return loc
+
     def hits(self, xps):
         loc = {}
         for (x,p) in xps:

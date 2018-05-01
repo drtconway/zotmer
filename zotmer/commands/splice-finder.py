@@ -72,6 +72,30 @@ class SequenceFactory(object):
                     break
         return self.prevSeq
 
+def updateLinkage(idx, xps, links):
+    Z = []
+    for (x,p) in xps:
+        zqs = idx[x]
+        if len(zqs) == 0:
+            continue
+        if len(zqs) > 1:
+            # damn. a tricky case - let's just skip it for now
+            # ideally we'd see if there's one that's consistent
+            # with the other positions, since that's most likely,
+            # and ignore the rest, or pick one somehow.
+            continue
+        Z.append((zqs[0][0], zqs[0][1], p))
+    Z.sort()
+
+    for i in range(1, len(Z)):
+        (z0, q0, p0) = Z[i-1]
+        (z1, q1, p1) = Z[i]
+        if z0 != z1 or q1 - q0 != p1 - p0:
+            lnk = ((z0,q0), (z1,q1))
+            if lnk not in links:
+                links[lnk] = 0
+            links[lnk] += 1
+
 def hits(idx, K, xps):
     loc = {}
     for (x,p) in xps:
