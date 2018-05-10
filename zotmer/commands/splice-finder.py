@@ -2,12 +2,14 @@
 zot splice-finder - find splice junctions from known exons
 
 Usage:
-    zot splice-finder [options] <exons> <input>...
+    zot splice-finder [options] <reference> <input>...
 
 Options:
     -k K            value of k to use [default: 25]
+    -C              show read counts only
     -F              feature mode
     -g PATH         directory of FASTQ reference sequences
+    -T FASTA        transcript to capture against.
     -v              produce verbose output
 """
 
@@ -17,9 +19,10 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmersWithPosList, kmersWithPosLists, murmer, rc, render
+from pykmer.basics import ham, kmersList, kmersWithPosLists, murmer, rc, render
 from pykmer.file import openFile, readFasta, readFastq
 from zotmer.library.hgvs import hg19ToRefSeq, refSeq2Hg19
+from zotmer.library.index import kmerPosIndex
 from zotmer.library.reads import reads
 
 def readBED(f):
@@ -72,7 +75,7 @@ class SequenceFactory(object):
                     break
         return self.prevSeq
 
-def updateLinkage(idx, xps, links):
+def simpleHits(idx, xps):
     Z = []
     for (x,p) in xps:
         zqs = idx[x]
@@ -85,16 +88,29 @@ def updateLinkage(idx, xps, links):
             # and ignore the rest, or pick one somehow.
             continue
         Z.append((zqs[0][0], zqs[0][1], p))
-    Z.sort()
+    return Z
 
-    for i in range(1, len(Z)):
-        (z0, q0, p0) = Z[i-1]
-        (z1, q1, p1) = Z[i]
-        if z0 != z1 or q1 - q0 != p1 - p0:
-            lnk = ((z0,q0), (z1,q1))
+def updateLinkage(Z, links):
+    Y = []
+    for (z, q, p) in sorted(Z):
+        if len(Y) > 0 and Y[-1][0] == z and Y[-1][2] + 1 == q and Y[-1][4] + 1 == p:
+            Y[-1] = (Y[-1][0], Y[-1][1], q, Y[-1][3], p)
+        else:
+            Y.append((z, q, q, p, p))
+
+    # For now, let's assume any Y != 2 is spurious.
+    if len(Y) != 2:
+        return
+
+    for i in range(1, len(Y)):
+        (z0, q0, p0, r0, s0) = Y[i-1]
+        (z1, q1, p1, r1, s1) = Y[i]
+        if z0 != z1 or q1 - p0 != r1 - s0:
+            lnk = ((z0,p0), (z1,q1))
             if lnk not in links:
                 links[lnk] = 0
             links[lnk] += 1
+    return
 
 def hits(idx, K, xps):
     loc = {}
@@ -111,14 +127,27 @@ def hits(idx, K, xps):
             loc[z][r] += 1
     return loc
 
+def accumulateHits(idx, K, xps, acc):
+    hs = hits(idx, K, xps)
+    for z in hs.keys():
+        for r in hs[z].keys():
+            for (x,p) in xps:
+                p -= 1
+                p += r
+                if z not in acc:
+                    acc[z] = {}
+                if p not in acc[z]:
+                    acc[z][p] = {}
+                if x not in acc[z][p]:
+                    acc[z][p][x] = 0
+                acc[z][p][x] += 1
+
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
     verbose = opts['-v']
 
     K = int(opts['-k'])
-
-    feature = opts['-F']
 
     D = 3
 
@@ -129,109 +158,38 @@ def main(argv):
         d = opts['-g']
     sf = SequenceFactory(d)
 
-    with openFile(opts['<exons>']) as f:
-        R = readBED(f)
+    #with openFile(opts['<exons>']) as f:
+    #    R = readBED(f)
 
-    refIdx = {}
-    refTbl = {}
-    zoneIdx = {}
-    for (acc, zones) in R.items():
-        if verbose:
-            print >> sys.stderr, 'reading %s' % (acc, )
-        accSeq = sf[acc]
-        for (s, e, nm, d) in zones:
-            refTbl[nm] = {}
-            zoneIdx[nm] = (acc, s, e, d)
-            seq = accSeq[s-1:e]
-            xps = kmersWithPosList(K, seq, False)
-            for (x,p) in xps:
-                p -= 1
-                if x not in refIdx:
-                    refIdx[x] = set([])
-                refIdx[x].add((nm,p))
-                refTbl[nm][p] = x
+    idx = kmerPosIndex(K)
+    with openFile(opts['<reference>']) as f:
+        for (nm, seq) in readFasta(f):
+            idx.addSeq(nm, seq)
 
-    counts = {}
     X = {}
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, verbose=verbose):
         rdL = itm.reads[0]
-        zL = len(rdL)
-        (fwdL, revL) = kmersWithPosLists(K, rdL[1])
-        fwdLHits = hits(refIdx, K, fwdL)
-        revLHits = hits(refIdx, K, revL)
 
         rdR = itm.reads[1]
-        zR = len(rdR)
-        (fwdR, revR) = kmersWithPosLists(K, rdR[1])
-        fwdRHits = hits(refIdx, K, fwdR)
-        revRHits = hits(refIdx, K, revR)
 
-        if feature:
-            for (hs,xps) in [(fwdLHits, fwdL), (revLHits, revL), (fwdRHits, fwdR), (revRHits, revR)]:
-                for z in sorted(hs.keys()):
-                    for r in sorted(hs[z].keys()):
-                        for (x,p) in xps:
-                            q = r + p
-                            if q % Q != 0:
-                                continue
-                            if q not in refTbl[z]:
-                                continue
-                            y = refTbl[z][q]
-                            if ham(x, y) > D:
-                                continue
-                            if z not in X:
-                                X[z] = {}
-                            if q not in X[z]:
-                                X[z][q] = {}
-                            if x not in X[z][q]:
-                                X[z][q][x] = 0
-                            X[z][q][x] += 1
-            continue
+        idx.pairHits(rdL[1], rdR[1], X)
 
-        if len(fwdLHits) > 0 or len(revRHits) > 0:
-            k = '&'.join(sorted(set(fwdLHits.keys()) | set(revRHits.keys())))
-            if k not in counts:
-                counts[k] = 0
-            counts[k] += 1
-            if k not in X:
-                X[k] = {}
-            Xk = X[k]
-            for (x,p) in fwdL:
-                if x not in Xk:
-                    Xk[x] = 0
-                Xk[x] += 1
-            for (x,p) in revR:
-                if x not in Xk:
-                    Xk[x] = 0
-                Xk[x] += 1
-
-        if len(fwdRHits) > 0 or len(revLHits) > 0:
-            k = '&'.join(sorted(set(fwdRHits.keys()) | set(revLHits.keys())))
-            if k not in counts:
-                counts[k] = 0
-            counts[k] += 1
-            if k not in X:
-                X[k] = {}
-            Xk = X[k]
-            for (x,p) in fwdR:
-                if x not in Xk:
-                    Xk[x] = 0
-                Xk[x] += 1
-            for (x,p) in revL:
-                if x not in Xk:
-                    Xk[x] = 0
-                Xk[x] += 1
-
-    if feature:
-        for z in sorted(X.keys()):
-            for p in sorted(X[z].keys()):
-                for (x,c) in sorted(X[z][p].items()):
-                    print '%s\t%d\t%s\t%d' % (z, p, render(K, x), c)
-        return
-
-    for (k,c) in counts.items():
-        for (x,n) in X[k].items():
-            print '%s\t%d\t%d\t%s' % (render(K, x), n, c, k)
+    for z in sorted(X.keys()):
+        for p in sorted(X[z].keys()):
+            y = idx.atPos(z, p)
+            if y is None:
+                continue
+            xs = set(X[z][p].keys()) - set([y])
+            for x in xs:
+                if ham(x,y) < 4:
+                    continue
+                xc = X[z][p][x]
+                if xc <= 1:
+                    continue
+                for (u,q) in idx[x]:
+                    #if abs(q - p) > 10000:
+                    #    continue
+                    print '%s\t%d\t%s\t%s\t%d\t%s' % (z, 1+p, render(K, y), u, 1+q, render(K, x))
 
 if __name__ == '__main__':
     main(sys.argv[1:])

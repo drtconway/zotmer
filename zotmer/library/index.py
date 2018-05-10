@@ -28,15 +28,19 @@ class kmerPosIndex(object):
         self.K = K
         self.seqs = {}
         self.idx = {}
+        self.tbl = {}
 
     def addSeq(self, nm, seq):
         assert nm not in self.seqs
         self.seqs[nm] = seq
-        for (x,p) in kmersWithPosList(K, seq, False):
+        for (x,p) in kmersWithPosList(self.K, seq, False):
             p -= 1
             if x not in self.idx:
                 self.idx[x] = []
             self.idx[x].append((nm,p))
+            if nm not in self.tbl:
+                self.tbl[nm] = {}
+            self.tbl[nm][p] = x
 
     def getSeq(self, nm):
         return self.seqs[nm]
@@ -45,6 +49,13 @@ class kmerPosIndex(object):
         if x not in self.idx:
             return []
         return self.idx[x]
+
+    def atPos(self, nm, p):
+        if nm not in self.tbl:
+            return None
+        if p not in self.tbl[nm]:
+            return None
+        return self.tbl[nm][p]
 
     def simpleHits(self, xps):
         loc = {}
@@ -89,7 +100,7 @@ class kmerPosIndex(object):
                     acc[z][q][x] += 1
 
     def readHits(self, seq):
-        (fwd, rev) = kmersWithPosLists(K, seq)
+        (fwd, rev) = kmersWithPosLists(self.K, seq)
         fwdLoc = self.hits(fwd)
         revLoc = self.hits(rev)
         return (fwd, fwdLoc, rev, revLoc)
