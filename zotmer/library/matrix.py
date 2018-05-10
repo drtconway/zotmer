@@ -700,6 +700,20 @@ def test_lowerTri2():
             else:
                 assert n[(i,j)] == 0.0
 
+def test_lowerTri3():
+    N = 11
+    m = lowerTri(N, N, 1.0)
+    d = diagonal(N, 1.0)
+    n = m * d
+    assert isinstance(n, lowerTri)
+    print n
+    for i in xrange(N):
+        for j in xrange(N):
+            if j <= i:
+                assert n[(i,j)] == 1.0
+            else:
+                assert n[(i,j)] == 0.0
+
 class upperTri(matrix):
     def __init__(self, N, M = None, val = None, trans = None):
         super(upperTri, self).__init__('u', N, M)
