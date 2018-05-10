@@ -808,6 +808,55 @@ class upperTri(matrix):
             x[i] = t / self[(i,i)]
         return x
 
+def test_upperTri0():
+    N = 11
+    m = upperTri(N, N, 1.0)
+    for i in xrange(N):
+        for j in xrange(N):
+            if i <= j:
+                assert m[(i,j)] == 1.0
+            else:
+                assert m[(i,j)] == 0.0
+
+def test_upperTri1():
+    N = 11
+    m = upperTri(N, N, 1.0)
+    n = m + m
+    assert isinstance(n, upperTri)
+    for i in xrange(N):
+        for j in xrange(N):
+            if i <= j:
+                assert n[(i,j)] == 2.0
+            else:
+                assert n[(i,j)] == 0.0
+
+def test_upperTri2():
+    N = 11
+    m = upperTri(N, N, 1.0)
+    n = m * m
+    assert isinstance(n, upperTri)
+    print n
+    for i in xrange(N):
+        for j in xrange(N):
+            if i <= j:
+                assert n[(i,j)] == 1.0 + j - i
+            else:
+                assert n[(i,j)] == 0.0
+
+def test_upperTri3():
+    N = 11
+    m = upperTri(N, N, 1.0)
+    d = diagonal(N, 1.0)
+    n = m * d
+    assert isinstance(n, upperTri)
+    print n
+    for i in xrange(N):
+        for j in xrange(N):
+            if i <= j:
+                assert n[(i,j)] == 1.0
+            else:
+                assert n[(i,j)] == 0.0
+
 def cholesky(A):
     (N,M) = A.dim()
     assert N == M
