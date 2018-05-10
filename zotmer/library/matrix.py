@@ -665,6 +665,41 @@ class lowerTri(matrix):
             x[i] = t / self[(i,i)]
         return x
 
+def test_lowerTri0():
+    N = 11
+    m = lowerTri(N, N, 1.0)
+    for i in xrange(N):
+        for j in xrange(N):
+            if j <= i:
+                assert m[(i,j)] == 1.0
+            else:
+                assert m[(i,j)] == 0.0
+
+def test_lowerTri1():
+    N = 11
+    m = lowerTri(N, N, 1.0)
+    n = m + m
+    assert isinstance(n, lowerTri)
+    for i in xrange(N):
+        for j in xrange(N):
+            if j <= i:
+                assert n[(i,j)] == 2.0
+            else:
+                assert n[(i,j)] == 0.0
+
+def test_lowerTri2():
+    N = 11
+    m = lowerTri(N, N, 1.0)
+    n = m * m
+    assert isinstance(n, lowerTri)
+    print n
+    for i in xrange(N):
+        for j in xrange(N):
+            if j <= i:
+                assert n[(i,j)] == 1.0 + i - j
+            else:
+                assert n[(i,j)] == 0.0
+
 class upperTri(matrix):
     def __init__(self, N, M = None, val = None, trans = None):
         super(upperTri, self).__init__('u', N, M)
