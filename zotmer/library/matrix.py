@@ -82,10 +82,8 @@ class matrix(object):
         return r
 
     def __isub__(self, other):
-        print 'isub'
         assert self.dim() == other.dim()
         for ij in other.iterKeys():
-            print ij
             self[ij] -= other[ij]
         return self
 
@@ -105,6 +103,16 @@ class matrix(object):
     def __str__(self):
         (N,M) = self.dim()
         return '\n'.join(['\t'.join([str(self[(i,j)]) for j in xrange(M)]) for i in xrange(N)])
+
+    def row(self, i):
+        (N,M) = self.dim()
+        assert 0 <= i and i < N
+        return [self[(i,j)] for j in xrange(M)]
+
+    def col(self, j):
+        (N,M) = self.dim()
+        assert 0 <= j and j < M
+        return [self[(i,j)] for i in xrange(N)]
 
 def test_matrix0():
     N0 = 12
@@ -596,18 +604,12 @@ class lowerTri(matrix):
 
     def __getitem__(self, ij):
         (i,j) = ij
-        #(N, M) = self.dim()
-        #assert 0 <= i and i < N
-        #assert 0 <= j and j < M
         if j > i:
             return 0.0
         return self.data[i][j]
 
     def __setitem__(self, ij, v):
         (i,j) = ij
-        #(N, M) = self.dim()
-        #assert 0 <= i and i < N
-        #assert 0 <= j and j < M
         assert j <= i
         self.data[i][j] = v
 
@@ -692,7 +694,6 @@ def test_lowerTri2():
     m = lowerTri(N, N, 1.0)
     n = m * m
     assert isinstance(n, lowerTri)
-    print n
     for i in xrange(N):
         for j in xrange(N):
             if j <= i:
@@ -706,7 +707,6 @@ def test_lowerTri3():
     d = diagonal(N, 1.0)
     n = m * d
     assert isinstance(n, lowerTri)
-    print n
     for i in xrange(N):
         for j in xrange(N):
             if j <= i:
@@ -835,7 +835,6 @@ def test_upperTri2():
     m = upperTri(N, N, 1.0)
     n = m * m
     assert isinstance(n, upperTri)
-    print n
     for i in xrange(N):
         for j in xrange(N):
             if i <= j:
@@ -849,7 +848,6 @@ def test_upperTri3():
     d = diagonal(N, 1.0)
     n = m * d
     assert isinstance(n, upperTri)
-    print n
     for i in xrange(N):
         for j in xrange(N):
             if i <= j:
@@ -861,13 +859,16 @@ def cholesky(A):
     (N,M) = A.dim()
     assert N == M
 
-    L = dense(N, N, 0.0)
+    L = lowerTri(N, N, 0.0)
     for j in xrange(N):
         t = A[(j,j)]
+        s = 0.0
         for k in xrange(j):
-            t -= sqr(L[(j,k)])
-        print t
-        L[(j,j)] = math.sqrt(t)
+            s += sqr(L[(j,k)])
+        d = t - s
+        if d < 0.0 and closeEnough(t, s):
+            d = 0.0
+        L[(j,j)] = math.sqrt(d)
 
         for i in xrange(j+1, N):
             t = A[(i,j)]
@@ -875,6 +876,37 @@ def cholesky(A):
                 t -= L[(i,k)]*L[(j,k)]
             L[(i,j)] = t / L[(j,j)]
     return L
+
+def test_cholesky0():
+    setRndSeed()
+    N = 15
+    a = lowerTri(N, N, 0.0)
+    for ij in a.iterKeys():
+        a[ij] = 3 * random.random() + 0.1
+    m = a * a.transpose()
+    l = cholesky(m)
+    for ij in a.iterKeys():
+        assert closeEnough(a[ij], l[ij])
+
+def choleskySolve(A, b):
+    L = cholesky(A)
+    y = L.fwdSub(b)
+    return L.transpose().backSub(y)
+
+def test_choleskySolve0():
+    setRndSeed()
+    N = 15
+    a = lowerTri(N, N, 0.0)
+    for ij in a.iterKeys():
+        a[ij] = 3 * random.random() + 0.1
+    m = a * a.transpose()
+    x = [random.random() + 1.0 for i in xrange(N)]
+    v = column(x)
+    Y = m * v
+    y = uncolumn(Y)
+    r = choleskySolve(m, y)
+    for i in xrange(N):
+        assert closeEnough(x[i], r[i])
 
 def choleskyLDL(A):
     (N,M) = A.dim()
@@ -897,3 +929,58 @@ def choleskyLDL(A):
             L[(i,j)] = t / D[(j,j)]
     return (L,D)
 
+def test_choleskyLDL():
+    setRndSeed()
+    N = 15
+    a = lowerTri(N, N, 0.0)
+    for ij in a.iterKeys():
+        if ij[0] == ij[1]:
+            a[ij] = 1.0
+        else:
+            a[ij] = 3 * random.random() + 0.1
+    b = diagonal(N, 0.0)
+    for ij in b.iterKeys():
+        b[ij] = 1.0 + random.random()
+    m = a * b * a.transpose()
+    (l,d) = choleskyLDL(m)
+    for ij in a.iterKeys():
+        assert closeEnough(a[ij], l[ij])
+    for ij in b.iterKeys():
+        assert closeEnough(b[ij], d[ij])
+
+def column(l):
+    assert isinstance(l, list)
+    N = len(l)
+    v = dense(N, 1)
+    for i in xrange(N):
+        v[(i,0)] = l[i]
+    return v
+
+def uncolumn(v):
+    (N,M) = v.dim()
+    assert M == 1
+    return [v[(i,0)] for i in xrange(N)]
+
+def mulCol(m, c):
+    return uncolumn(m * column(c))
+
+def linearLeastSquares(X, y):
+    Xt = X.transpose()
+    L = cholesky(Xt * X)
+    b = mulCol(Xt, y)
+    z = L.fwdSub(b)
+    x = L.transpose().backSub(z)
+    return x
+
+def test_linearLeastSquares0():
+    setRndSeed()
+    N = 12
+    M = 5
+    X = dense(N, M)
+    y = [0.0 for i in xrange(N)]
+    for i in xrange(N):
+        for j in xrange(M):
+            X[(i,j)] = random.randint(2, M)
+        y[i] = random.randint(N, N*M)
+    x = linearLeastSquares(X, y)
+    assert True

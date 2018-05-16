@@ -11,124 +11,232 @@ def entropy(d):
         e += -p * math.log(p)
     return e
 
+class InformationGainSplitter(object):
+    def __init__(self, X, Y, T):
+        self.X = X
+        self.Y = Y
+        self.T = T
+
+    def score(self, S):
+        return self.entropy(S)
+
+    def labelProbabilities(self, S):
+        P = {}
+        for i in S:
+            y = self.Y[i]
+            if y not in P:
+                P[y] = 0
+            P[y] += 1
+        t = len(S)
+        return dict([(y,float(n)/float(t)) for (y,n) in P.items()])
+
+    def scoreSplits(self, S, j, E0):
+        if self.T[j] == 'cat':
+            return self.scoreCategorical(S, j, E0)
+        if self.T[j] == 'ord':
+            return self.scoreOrdinal(S, j, E0)
+        return self.scoreContinuous(S, j, E0)
+
+    def scoreCategorical(self, S, j, E0):
+        if E0 is None:
+            E0 = self.entropy(S)
+
+        W = set([self.X[i][j] for i in S])
+
+        if len(W) == 1:
+            return
+
+        for x in W:
+            lhsS = []
+            rhsS = []
+            for i in S:
+                if self.X[i][j] == x:
+                    lhsS.append(i)
+                else:
+                    rhsS.append(i)
+            assert len(lhsS) > 0
+            assert len(rhsS) > 0
+            lhsP = float(len(lhsS)) / float(len(S))
+            lhsE = self.entropy(lhsS)
+            rhsP = float(len(rhsS)) / float(len(S))
+            rhsE = self.entropy(rhsS)
+            ig = E0 - (lhsP*lhsE + rhsP*rhsE)
+            yield (ig, j, 'eq', x, lhsE, rhsE, lhsS, rhsS)
+
+    def scoreOrdinal(self, S, j):
+        return self.scoreContinuous(S, j, E0)
+
+    def scoreContinuous(self, S, j, E0):
+
+        W = sorted(set([self.X[i][j] for i in S]))
+
+        for x in W[:-1]:
+            lhsS = []
+            rhsS = []
+            for i in S:
+                if self.X[i][j] <= x:
+                    lhsS.append(i)
+                else:
+                    rhsS.append(i)
+            assert len(lhsS) > 0
+            assert len(rhsS) > 0
+            lhsP = float(len(lhsS)) / float(len(S))
+            lhsE = self.entropy(lhsS)
+            rhsP = float(len(rhsS)) / float(len(S))
+            rhsE = self.entropy(rhsS)
+            ig = E0 - (lhsP*lhsE + rhsP*rhsE)
+            yield (ig, j, 'le', x, lhsE, rhsE, lhsS, rhsS)
+
+    def entropy(self, S):
+        P = {}
+        for i in S:
+            y = self.Y[i]
+            if y not in P:
+                P[y] = 0
+            P[y] += 1
+        return entropy(P)
+
 class decisionTree(object):
     def __init__(self, tree):
+        """
+        Create a decision tree object
+
+        A decision tree has internal nodes which are tuples
+            (featureIndex, relation, value, lhs, rhs)
+        where
+            featureIndex    the feature to branch on: [0, M)
+            relation        the compariston to make for a left branch: eq, le
+            value           the value to compare against
+            lhs,rhs         the left-hand and right-hand children
+
+        A leaf node is a dictionary with labels as keys and
+        the associated probability of that label as values.
+        """
         self.root = tree
 
     @staticmethod
-    def make(ns, ms, X, Y):
-        root = decisionTree.makeRec(ns, ms, X, Y)
+    def make(S, M, X, Y, T):
+        """
+        Make a new decision tree.
+
+        S is the set of sample numbers from [0, N) to use from X
+        M is the number of features
+        X is the N*M matrix of training data
+        Y is the N length vector of labels
+        T the M length vector of feature types
+        """
+        splitter = InformationGainSplitter(X, Y, T)
+        E0 = splitter.score(S)
+        root = decisionTree.makeRec(S, M, E0, splitter)
         return decisionTree(root)
 
     @staticmethod
-    def makeRec(ns, ms, X, Y):
-        j = random.choice(ms)
-        r = decisionTree.split(ns, j, X, Y)
-        if len(r) == 1:
-            return r
-        (x, e, lNs, rNs) = r
-        lhs = decisionTree.makeRec(lNs, ms, X, Y)
-        rhs = decisionTree.makeRec(rNs, ms, X, Y)
-        return (j, x, lhs, rhs)
+    def makeRec(S, M, E0, splitter):
+        if E0 < 1e-3:
+            # If the entropy is very low, then make a leaf node
+            return splitter.labelProbabilities(S)
 
-    @staticmethod
-    def split(ns, j, X, Y):
-        D = {}
-        T = {}
-        S = {}
-        for i in ns:
-            y = Y[i]
-            if y not in S:
-                S[y] = 0
-                T[y] = 0
-            T[y] += 1
-            x = X[i][j]
-            if x not in D:
-                D[x] = {}
-            if y not in D[x]:
-                D[x][y] = 0
-            D[x][y] += 1
-        
-        if len(T) == 1:
-            return (T.keys()[0],)
+        # We're going to sample a set of root-M features to
+        # choose from for creating this split.
+        #
+        n = int(1+math.sqrt(M))
+        if M < 1000:
+            # For smallish numbers of features just
+            # shuffle a list and pull off the first n
+            #
+            J = range(M)
+            random.shuffle(J)
+            J = set(J[:n])
+        else:
+            # When the universe of features is large,
+            # pick random ones.
+            #
+            # TODO: avoid degenerate features.
+            #
+            J = set([])
+            while len(J) < n:
+                j = random.randint(0, M-1)
+                J.add(j)
 
-        t = sum(T.values())
+        splits = []
+        for j in J:
+            for s in splitter.scoreSplits(S, j, E0):
+                splits.append(s)
 
-        e = 0.0
-        for (y,n) in T.items():
-            p = float(n) / float(t)
-            if p > 0.0:
-                e += n * -p*math.log(p)
+        if len(splits) == 0:
+            # If there are no splits, then make a leaf
+            return splitter.labelProbabilities(S)
 
-        E = []
-        for x in sorted(D.keys()):
-            for (y,n) in D[x].items():
-                S[y] += n
-            t0 = sum(S.values())
-            if t0 == t:
+        # Among the possible splits, make a stochastic choice
+        # based on the relative score for each split.
+        #
+        chosenS = None
+        totalScore = sum([s[0] for s in splits])
+        u = random.random()
+        for s in splits:
+            p = s[0]/totalScore
+            if u < p:
+                chosenS = s
                 break
-            eL = 0.0
-            eR = 0.0
-            for y in S.keys():
-                p = float(S[y]) / float(t0)
-                if p > 0.0:
-                    eL += S[y] * -p*math.log(p)
-                q = float(T[y] - S[y]) / float(t - t0)
-                if q > 0.0:
-                    eR += (T[y] - S[y]) * -q*math.log(q)
-            eGain = e - (eL + eR)
-            E.append((eGain, x, e, eL, eR))
-        E.sort()
-        (eGain, x, e, eL, eR) = E[-1]
-        lNs = []
-        rNs = []
-        for i in ns:
-            if X[i][j] <= x:
-                lNs.append(i)
-            else:
-                rNs.append(i)
-        return (x, e, lNs, rNs)
+            u -= p
+        assert chosenS is not None
+
+        (sc, j, rel, x, lhsE, rhsE, lhsS, rhsS) = chosenS
+
+        lhs = decisionTree.makeRec(lhsS, M, lhsE, splitter)
+        rhs = decisionTree.makeRec(rhsS, M, rhsE, splitter)
+        return (j, rel, x, lhs, rhs)
 
     def decide(self, xs):
         n = self.root
-        assert n is not None
-        while len(n) > 1:
-            (i, v, lhs, rhs) = n
-            if xs[i] <= v:
-                n = lhs
+        while isinstance(n, tuple):
+            (i, rel, v, lhs, rhs) = n
+            if rel == 'le':
+                if xs[i] <= v:
+                    n = lhs
+                else:
+                    n = rhs
             else:
-                n = rhs
-        return n[0]
+                assert rel == 'eq'
+                if xs[i] == v:
+                    n = lhs
+                else:
+                    n = rhs
+        return n
 
 class ranfor(object):
     def __init__(self):
+        """Initialize an empty random forest"""
         self.T = []
 
-    def make(self, N, M, X, Y):
+    def make(self, N, M, B, X, Y, T):
+        """
+        Train a random forest.
+
+        N is the number of training samples (rows) in X
+        M is the number of features (columns) in X
+        B is the number of trees to create
+        X is the training data matrix
+        Y is the vector of (N) labels for the training data
+        T is the vector of types of the features: cat[egorical], ord[inal], con[tinuous]
+        """
         n = int(math.ceil(math.sqrt(N)))
-        m = int(math.ceil(math.sqrt(M)))
-        B = 1000
         for b in xrange(B):
-            ns = [random.randint(0, N-1) for i in xrange(n)]
-            ms = [random.randint(0, M-1) for i in xrange(m)]
-            t = decisionTree.make(ns, ms, X, Y)
+            S = [random.randint(0, N-1) for i in xrange(n)]
+            J = range(M)
+            t = decisionTree.make(S, J, X, Y, T)
             self.T.append(t)
 
     def classify(self, v):
+        """
+        Take a feature vector and return a dict with the labels as keys, and probability as values.
+        """
         votes = {}
         for t in self.T:
-            j = t.decide(v)
-            if j not in votes:
-                votes[j] = 0
-            votes[j] += 1
-        maxJ = []
-        maxN = 0
-        for (j,n) in votes.iteritems():
-            if n < maxN:
-                continue
-            if n > maxN:
-                maxN = n
-                maxJ = []
-            maxJ.append(j)
-        return random.choice(maxJ)
-
+            cps = t.decide(v)
+            for (c,p) in cps.items():
+                if c not in votes:
+                    votes[c] = 0.0
+                votes[c] += p
+        pt = sum(votes.values())
+        return dict([(c, p/pt) for (c,p) in votes.items()])
