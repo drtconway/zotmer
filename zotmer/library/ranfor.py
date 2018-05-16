@@ -223,8 +223,7 @@ class ranfor(object):
         n = int(math.ceil(math.sqrt(N)))
         for b in xrange(B):
             S = [random.randint(0, N-1) for i in xrange(n)]
-            J = range(M)
-            t = decisionTree.make(S, J, X, Y, T)
+            t = decisionTree.make(S, M, X, Y, T)
             self.T.append(t)
 
     def classify(self, v):
