@@ -31,5 +31,7 @@ for (ch, st, en, nm) in bed:
         with openFile(chrToPath(ch)) as f:
             for (_nm, seq) in readFasta(f):
                 chSeq = seq
-    print '>' + nm
+    #print '>' + nm
+    #print chSeq[st-1:en]
+    print '>%s:%d-%d' % (ch, st, en)
     print chSeq[st-1:en]
