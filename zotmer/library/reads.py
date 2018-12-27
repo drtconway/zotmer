@@ -5,8 +5,8 @@ from os.path import basename
 
 from tqdm import tqdm
 
-from pykmer.basics import kmersList, kmersLists
-from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.basics import kmersList, kmersLists
+from zotmer.library.file import openFile, readFasta, readFastq
 
 compressionSuffixes = ['.gz', '.bz2']
 

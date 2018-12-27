@@ -3,7 +3,7 @@
 
 import json
 
-from pykmer.container.casket import casket
+from zotmer.library.container.casket import casket
 
 class kmers(casket):
     def __init__(self, fn, mode):

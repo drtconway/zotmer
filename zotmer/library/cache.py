@@ -4,7 +4,7 @@ import sys
 
 import requests
 
-from pykmer.file import openFile
+from zotmer.library.file import openFile
 
 # https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=NC_000962.3&rettype=fasta&retmode=text
 

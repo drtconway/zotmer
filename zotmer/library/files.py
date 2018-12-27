@@ -1,9 +1,9 @@
 import os
 import struct
 
-from pykmer.container.casket import casket
-from pykmer.file import tmpfile
-import pykmer.codec64 as codec64
+from zotmer.library.container.casket import casket
+from zotmer.library.file import tmpfile
+import zotmer.library.codec64 as codec64
 
 class fileEncoder(codec64.encoder):
     def __init__(self, f):

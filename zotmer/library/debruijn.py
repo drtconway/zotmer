@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from pykmer.basics import ham, kmersList, render
+from zotmer.library.basics import ham, kmersList, render
 
 def is_in(i, n):
     if isinstance(n, int):

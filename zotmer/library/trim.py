@@ -1,6 +1,6 @@
 import sys
-from pykmer.basics import ham, render
-from pykmer.misc import unionfind
+from zotmer.library.basics import ham, render
+from zotmer.library.misc import unionfind
 
 def make_masks(K, tau):
     tau1 = tau + 1

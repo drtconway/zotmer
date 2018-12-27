@@ -1,6 +1,6 @@
 from zipfile import ZipFile, ZIP_DEFLATED
 from tqdm import tqdm
-from pykmer.basics import kmersList
+from zotmer.library.basics import kmersList
 
 class capture(object):
     def __init__(self, K, **kwargs):
