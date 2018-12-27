@@ -6,6 +6,7 @@ Usage:
 from zotmer.library.kmers import kmers
 
 import docopt
+import sys
 
 def main(argv):
     opts = docopt.docopt(__doc__, argv)

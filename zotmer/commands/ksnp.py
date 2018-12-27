@@ -22,8 +22,8 @@ from zotmer.library.basics import ham, lev
 from zotmer.library.bits import popcnt
 from zotmer.library.misc import unionfind
 from zotmer.library.sparse import sparse
-from zotlib.library.kmers import kmers
-from zotlib.library.files import readKmers
+from zotmer.library.kmers import kmers
+from zotmer.library.files import readKmers
 
 def ksnp(K, xs):
     J = (K - 1) // 2
