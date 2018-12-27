@@ -13,7 +13,7 @@ class PyTest(TestCommand):
         pytest.main(self.test_args)
 
 setup(name='zotmer',
-        version='0.1',
+        version='0.2',
         description='A python k-mer application workbench',
         url='http://github.com/drtconway/zotmer',
         author='Tom Conway',
