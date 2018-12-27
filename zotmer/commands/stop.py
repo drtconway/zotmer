@@ -18,8 +18,8 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmer, kmersList, kmersWithPosList, render
-from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.basics import ham, kmer, kmersList, kmersWithPosList, render
+from zotmer.library.file import openFile, readFasta, readFastq
 from zotmer.library.prot import nucToAa3
 
 stopStrs = ['TAA', 'TAG', 'TGA']

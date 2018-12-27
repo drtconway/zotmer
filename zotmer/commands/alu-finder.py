@@ -21,8 +21,8 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmersWithPosList, kmersWithPosLists, murmer, rc, render
-from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.basics import ham, kmersWithPosList, kmersWithPosLists, murmer, rc, render
+from zotmer.library.file import openFile, readFasta, readFastq
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19
 from zotmer.library.reads import reads
 

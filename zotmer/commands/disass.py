@@ -21,8 +21,8 @@ import sys
 import docopt
 import yaml
 
-from pykmer.basics import kmersList, sub
-from pykmer.file import openFile, readFasta
+from zotmer.library.basics import kmersList, sub
+from zotmer.library.file import openFile, readFasta
 
 def summarize(xs, cut, Q):
     res = {}

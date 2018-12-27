@@ -10,9 +10,9 @@ Options:
     -l LEN          minimum length of contig to report (default 2K)
 """
 
-from pykmer.basics import rc, render
-from pykmer.sparse import sparse
-from pykmer.bitvec import bitvec
+from zotmer.library.basics import rc, render
+from zotmer.library.sparse import sparse
+from zotmer.library.bitvec import bitvec
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmers
 

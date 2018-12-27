@@ -14,7 +14,7 @@ import sys
 
 import docopt
 
-from pykmer.file import autoremove
+from zotmer.library.file import autoremove
 
 import commands
 

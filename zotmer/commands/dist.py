@@ -7,8 +7,8 @@ Options:
                 Use "-M list" to get a list of available measures.
 """
 
-import pykmer.dist as dist
-from pykmer.exceptions import MismatchedK
+import zotmer.library.dist as dist
+from zotmer.library.exceptions import MismatchedK
 from zotmer.library.files import readKmers, readKmersAndCounts
 from zotmer.library.kmers import kmers
 

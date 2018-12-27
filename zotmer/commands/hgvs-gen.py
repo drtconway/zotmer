@@ -39,7 +39,7 @@ import sys
 import docopt
 from tqdm import tqdm
 
-from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.file import openFile, readFasta, readFastq
 from zotmer.library import hgvs
 
 def geomvar(p):

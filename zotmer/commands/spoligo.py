@@ -17,9 +17,9 @@ import sys
 
 import docopt
 
-from pykmer.basics import kmer, render
-from pykmer.misc import uniq
-from pykmer.sparse import sparse
+from zotmer.library.basics import kmer, render
+from zotmer.library.misc import uniq
+from zotmer.library.sparse import sparse
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmers
 

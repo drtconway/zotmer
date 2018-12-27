@@ -22,9 +22,9 @@ import sys
 
 import docopt
 
-import pykmer.basics as basics
-from pykmer.file import openFile, readFasta
-from pykmer.stats import logAdd, logChoose
+import zotmer.library.basics as basics
+from zotmer.library.file import openFile, readFasta
+from zotmer.library.stats import logAdd, logChoose
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmers
 

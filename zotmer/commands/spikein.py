@@ -34,8 +34,8 @@ import sys
 import docopt
 from tqdm import tqdm
 
-from pykmer.file import openFile, readFasta, readFastq
-from pykmer.misc import uniq
+from zotmer.library.file import openFile, readFasta, readFastq
+from zotmer.library.misc import uniq
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19, Substitution
 from zotmer.library.rope import rope
 

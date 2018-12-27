@@ -18,10 +18,10 @@ import sys
 
 import docopt
 
-from pykmer.basics import ham, lev
-from pykmer.bits import popcnt
-from pykmer.misc import unionfind
-from pykmer.sparse import sparse
+from zotmer.library.basics import ham, lev
+from zotmer.library.bits import popcnt
+from zotmer.library.misc import unionfind
+from zotmer.library.sparse import sparse
 from zotlib.library.kmers import kmers
 from zotlib.library.files import readKmers
 

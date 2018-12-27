@@ -17,8 +17,8 @@ import sys
 
 import docopt
 
-from pykmer.basics import kmersList, murmer, rc, render
-from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.basics import kmersList, murmer, rc, render
+from zotmer.library.file import openFile, readFasta, readFastq
 
 def pairs(xs):
     assert len(xs) & 1 == 0

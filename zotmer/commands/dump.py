@@ -3,7 +3,7 @@ Usage:
     zot dump <input>
 """
 
-from pykmer.basics import render
+from zotmer.library.basics import render
 from zotmer.library.files import readKmers, readKmersAndCounts
 from zotmer.library.kmers import kmers
 

@@ -17,8 +17,8 @@ import zipfile
 
 import docopt
 
-from pykmer.basics import kmersList, render
-from pykmer.file import openFile, readFasta, readFastq, tmpfile
+from zotmer.library.basics import kmersList, render
+from zotmer.library.file import openFile, readFasta, readFastq, tmpfile
 
 from zotmer.library.kmers import kmers
 from zotmer.library.files import writeKmers

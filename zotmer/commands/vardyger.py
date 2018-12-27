@@ -22,8 +22,8 @@ import docopt
 import tqdm
 import yaml
 
-from pykmer.basics import ham, kmersList, kmersWithPosList, kmersWithPosLists, rc, render
-from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.basics import ham, kmersList, kmersWithPosList, kmersWithPosLists, rc, render
+from zotmer.library.file import openFile, readFasta, readFastq
 from zotmer.library.debruijn import interpolate, paths
 from zotmer.library.hgvs import Duplication
 from zotmer.library.reads import reads

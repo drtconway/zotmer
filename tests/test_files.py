@@ -1,8 +1,8 @@
 import random
 
-from pykmer.basics import render
-from pykmer.file import autoremove, tmpfile
-from pykmer.container.casket import casket
+from zotmer.library.basics import render
+from zotmer.library.file import autoremove, tmpfile
+from zotmer.library.container.casket import casket
 from zotmer.library.files import readVectorList, writeVector, readKmers, readKmersList, writeKmersList
 
 def test_rwVector():

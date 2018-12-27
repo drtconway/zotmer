@@ -28,11 +28,11 @@ import time
 
 import docopt
 
-from pykmer.basics import kmersList, render, sub
-from pykmer.container.casket import casket
-from pykmer.file import openFile, readFasta, readFastqBlock, tmpfile
-from pykmer.misc import heap, radix_sort
-from pykmer.timer import timer
+from zotmer.library.basics import kmersList, render, sub
+from zotmer.library.container.casket import casket
+from zotmer.library.file import openFile, readFasta, readFastqBlock, tmpfile
+from zotmer.library.misc import heap, radix_sort
+from zotmer.library.timer import timer
 
 from zotmer.library.files import countsWriter, kmerWriter, readKmersAndCounts, writeKmersAndCounts, writeKmersAndCounts2
 import zotmer.library.kmers as zotk

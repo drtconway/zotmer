@@ -7,12 +7,12 @@ Options:
     -X          create an index
 """
 
-from pykmer.basics import fasta, kmersWithPos, ham, lcp, rc, render
-from pykmer.file import readFasta
-from pykmer.misc import unionfind
-from pykmer.sparse import sparse
-from pykmer.stats import counts2cdf, ksDistance2, log1mexp, logAdd, logChoose, logFac
-from pykmer.container.casket import casket
+from zotmer.library.basics import fasta, kmersWithPos, ham, lcp, rc, render
+from zotmer.library.file import readFasta
+from zotmer.library.misc import unionfind
+from zotmer.library.sparse import sparse
+from zotmer.library.stats import counts2cdf, ksDistance2, log1mexp, logAdd, logChoose, logFac
+from zotmer.library.container.casket import casket
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmers
 

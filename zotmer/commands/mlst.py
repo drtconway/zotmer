@@ -16,7 +16,7 @@ import sys
 
 import docopt
 
-from pykmer.index import buildIndex, index
+from zotmer.library.index import buildIndex, index
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmers
 

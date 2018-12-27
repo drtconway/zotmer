@@ -6,11 +6,11 @@ Options:
     -r ref      reference k-mers
 """
 
-from pykmer.basics import can, fasta, lcp, render
-from pykmer.file import readFasta
-from pykmer.misc import heap
-from pykmer.stats import logBinGe, logBinLe
-from pykmer.exceptions import MismatchedK
+from zotmer.library.basics import can, fasta, lcp, render
+from zotmer.library.file import readFasta
+from zotmer.library.misc import heap
+from zotmer.library.stats import logBinGe, logBinLe
+from zotmer.library.exceptions import MismatchedK
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts
 

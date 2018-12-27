@@ -8,10 +8,10 @@ import sys
 
 import docopt
 
-from pykmer.basics import render
-from pykmer.file import tmpfile
-from pykmer.container.casket import casket
-from pykmer.misc import heap
+from zotmer.library.basics import render
+from zotmer.library.file import tmpfile
+from zotmer.library.container.casket import casket
+from zotmer.library.misc import heap
 from zotmer.library.kmers import kmers
 from zotmer.library.files import countsWriter, kmerWriter, readKmersAndCounts, writeKmersAndCounts, writeKmersAndCounts2
 

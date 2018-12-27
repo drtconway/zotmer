@@ -14,7 +14,7 @@ import sys
 
 import docopt
 
-from pykmer.basics import murmer
+from zotmer.library.basics import murmer
 from zotmer.library.kmers import kmers
 from zotmer.library.files import readKmersAndCounts, writeKmersAndCounts
 

@@ -47,10 +47,10 @@ import zipfile
 import docopt
 import yaml
 
-from pykmer.basics import ham, kmers, kmersList, kmersWithPosList, murmer, rc, render
-from pykmer.file import openFile, readFasta, readFastq
-from pykmer.misc import unionfind
-from pykmer.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
+from zotmer.library.basics import ham, kmers, kmersList, kmersWithPosList, murmer, rc, render
+from zotmer.library.file import openFile, readFasta, readFastq
+from zotmer.library.misc import unionfind
+from zotmer.library.stats import counts2cdf, pdf2cdf, logBinEq, logBinLe, ksDistance2, logGammaP, logGammaQ, logLowerGamma
 from zotmer.library.capture import capture
 from zotmer.library.debruijn import fixed_path_kmers, paths
 from zotmer.library.hgvs import hg19ToRefSeq, makeHGVS, refSeq2Hg19

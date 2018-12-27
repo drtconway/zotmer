@@ -21,8 +21,8 @@ import docopt
 import tqdm
 import yaml
 
-from pykmer.basics import kmersList
-from pykmer.file import openFile, readFasta, readFastq
+from zotmer.library.basics import kmersList
+from zotmer.library.file import openFile, readFasta, readFastq
 from zotmer.library.reads import reads
 
 class ReadCache(object):
