@@ -124,6 +124,9 @@ def genVar(c, seq, s, e, ts, ds):
     if f == 'sub':
         p = random.randint(s, e)
         r = seq[p].upper()
+        while r not in "ACGT":
+            p = random.randint(s, e)
+            r = seq[p].upper()
         a = random.choice(alts[r])
         return hgvs.Substitution(c, p, r, a)
     if f == 'del':
