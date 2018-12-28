@@ -423,3 +423,72 @@ class radix_sort(object):
         for p in ps:
             self.sort(d + 1, p)
 
+class intervalSet(object):
+    def __init__(self):
+        self.intervals = []
+        self.sorted = True
+
+    def add(self, ivl):
+        self.intervals.append(ivl)
+        self.sorted = False
+
+    def __contains__(self, i):
+        if not self.sorted:
+            self.intervals.sort()
+            self.sorted = True
+
+        lo = 0
+        hi = len(self.intervals)
+
+        while lo < hi:
+            mid = (lo + hi) // 2
+            (st, en) = self.intervals[mid]
+            if st <= i and i <= en:
+                return True
+            if i <= st:
+                hi = mid - 1
+            else:
+                lo = mid + 1
+
+        if lo < len(self.intervals):
+            (st, en) = self.intervals[lo]
+            if st <= i and i <= en:
+                return True
+
+        return False
+
+class intervalMap(object):
+    def __init__(self):
+        self.intervals = []
+        self.sorted = True
+
+    def add(self, ivl, val):
+        x = tuple(list(ivl) + [val])
+        self.intervals.append(x)
+        self.sorted = False
+
+    def __getitem__(self, i):
+        if not self.sorted:
+            self.intervals.sort()
+            self.sorted = True
+
+        lo = 0
+        hi = len(self.intervals)
+
+        while lo < hi:
+            mid = (lo + hi) // 2
+            (st, en, nm) = self.intervals[mid]
+            if st <= i and i <= en:
+                return nm
+            if i <= st:
+                hi = mid - 1
+            else:
+                lo = mid + 1
+
+        if lo < len(self.intervals):
+            (st, en, nm) = self.intervals[lo]
+            if st <= i and i <= en:
+                return nm
+
+        return None
+
