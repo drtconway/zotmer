@@ -3,26 +3,33 @@ zot homie - scan for homopolymer variants.
 
 Usage:
     zot homie -X [options] <base> <min-length> <max-length> <input>...
-    zot homie -M [options] <index> <input>...
+    zot homie -M [options] <input>...
+    zot homie -S [options] <model> <input>...
     zot homie [options] <index> <input>...
 
 Options:
     -X              scan reference fasta files for homopolymers
     -M              merge counts and construct a reference model for homopolymers
+    -S              score samples against a model.
     -B BEDFILE      [indexing] only include homopolymers in the regions from the given BED file.
     -D D            maximum hamming distance for anchor k-mers [default: 1]
+    -I FILENAME     [merging] read input files from the named file, 1 per line.
     -k K            k-mer size to use [default: 25]
+    -m MODELFILE    score samples against the model produced by merging
     -o FILENMANE    write the output to the named file rather than stdout
     -s SAMPLE       give a sample name to include in the output
+    -T              [merging] print output in a tabular form
     -v              produce verbose output
     -W WIDTH        [indexing] width of context to be used for read pulldown [default: 100]
 
 <base> is a 16-letter FASTA description of which nucleotides to scan for.
 <min-length> and <max-length> specify the minimum and maximum homopolymer lengths to scan for.
 <index> is a yaml file with the output of a 'zot homie -X' invocation.
+<model> is a yaml file with the output of a 'zot homie -M' invocation.
 
 """
 
+import math
 import re
 import sys
 
@@ -113,6 +120,35 @@ def spliceKmers(K, x, y, b, j):
     seq = render(K, x) + (render(1, b) * j) + render(K, y)
     return kmersList(K, seq)
 
+def dist(cs):
+    if type(cs) == list:
+        t = sum(cs)
+        v = 1.0/float(t)
+        return [c*v for c in cs]
+    else:
+        t = sum(cs.values())
+        v = 1.0/float(t)
+        return dict([(j,c*v) for (j,c) in cs.items()])
+
+def kld(ps, qs, N):
+    assert type(ps) == type(qs)
+    if type(ps) == list:
+        d = 0.0
+        for (p,q) in zip(ps, qs):
+            if p == 0.0:
+                continue
+            assert q > 0.0
+            d += p * math.log(p/q)
+        return d
+    else:
+        q0 = 1.0/(N+1.0)
+        d = 0.0
+        for (j,p) in ps.items():
+            assert p > 0.0
+            q = qs.get(j, q0)
+            d += p * math.log(p/q)
+        return d
+
 def main(argv):
     opts = docopt.docopt(__doc__, argv)
 
@@ -139,6 +175,100 @@ def main(argv):
 
         yaml.safe_dump_all(scan(bs, lo, hi, W, bed, opts['<input>']), out, default_flow_style=False)
 
+        return
+
+    if opts['-M']:
+        inputs = opts['<input>']
+        if opts['-I']:
+            with openFile(opts['-I']) as f:
+                for l in f:
+                    nm = l.strip()
+                    inputs.append(nm)
+
+        I = {}
+        R = {}
+        J = 0
+
+        for fn in inputs:
+            with open(fn) as f:
+                if verbose:
+                    print >> sys.stderr, 'processing', fn
+                for itm in yaml.load_all(f):
+                    loc = itm['locus']
+
+                    I[loc] = dict([(k,itm[k]) for k in itm.keys() if k != 'counts' and k != 'sample'])
+
+                    #j = sum(itm['counts'])
+                    #if j < 10:
+                    #    continue 
+
+                    if loc not in R:
+                        R[loc] = itm['counts']
+                        J = max(J, max(itm['counts'].keys()))
+                    else:
+                        for (j,c) in itm['counts'].items():
+                            if j in R[loc]:
+                                R[loc][j] += c
+                            else:
+                                R[loc][j] = c
+                            J = max(J, j)
+
+        for loc in R.keys():
+            cs = R[loc]
+            ps = dist(cs)
+            I[loc]['counts'] = cs
+            I[loc]['dist'] = ps
+
+        for loc in I.keys():
+            if 'dist' not in I[loc]:
+                del I[loc]
+
+        out = sys.stdout
+        if opts['-o']:
+            out = openFile(opts['-o'], 'w')
+
+        if opts['-T']:
+            for loc in sorted(R.keys()):
+                ps = [R[loc].get(j, 0.0) for j in range(J+1)]
+                ss = ['%g' % (p, ) for p in ps]
+                print '\t'.join([loc, I[loc]['base'], str(I[loc]['length'])] + ss)
+            return
+
+        yaml.safe_dump(I, out, default_flow_style=False)
+
+        return
+
+    if opts['-S']:
+        with openFile(opts['<model>']) as f:
+            model = yaml.load(f)
+
+        out = sys.stdout
+        if opts['-o']:
+            out = openFile(opts['-o'], 'w')
+
+        for fn in opts['<input>']:
+            with openFile(fn) as f:
+                for itm in yaml.load_all(f):
+                    l = itm['locus']
+                    if l not in model:
+                        print >> sys.stderr, 'warning: file %s, locus %s was not in the model.' % (fn, l)
+                        continue
+                    cs = itm['counts']
+                    ps = dist(cs)
+                    if 'dist' not in model[l]:
+                        print >> sys.stderr, model[l]
+                    d = kld(ps, model[l]['dist'], sum(model[l]['counts'].values()))
+                    nm = fn
+                    if 'sample' in itm:
+                        nm = itm['sample']
+                    g = 'unknown'
+                    if 'gene' in itm:
+                        g = itm['gene']
+
+                    fmts = ['%s', '%s', '%s', '%g']
+                    vals = [nm, l, g, d]
+
+                    print >> out, '\t'.join(fmts) % tuple(vals)
         return
 
     K = int(opts['-k'])
