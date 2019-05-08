@@ -928,7 +928,7 @@ def main(argv):
         print >> sys.stderr, "loading index."
 
     with open(opts['<index>']) as f:
-        hgvsVars = yaml.load(f)
+        hgvsVars = yaml.load(f, Loader=yaml.FullLoader)
 
     NV = len(hgvsVars)
 
