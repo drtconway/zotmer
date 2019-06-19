@@ -3,7 +3,7 @@ zot hgvs-find - search for known variants in read data.
 
 Usage:
     zot fizzle -P [options] <gene-tx-list> <refgene> <bedfile>
-    zot fizzle -X [options] <index> <must-have> [<may-have>]
+    zot fizzle -X [options] <index> <must-have>
     zot fizzle [options] <index> <input>...
 
 Options:
@@ -18,9 +18,11 @@ import sys
 import docopt
 import yaml
 
-from zotmer.library.basics import kmersWithPosList, render
+from zotmer.library.basics import kmersWithPosList, kmersWithPosLists, render
 from zotmer.library.file import openFile, readFasta, readFastq
 from zotmer.library.hgvs import hg19ToRefSeq, refSeq2Hg19
+from zotmer.library.misc import unionfind
+from zotmer.library.reads import reads
 
 verbose = False
 
@@ -71,7 +73,7 @@ def prepareBedFile(geneListFn, refGeneFn, outFn):
                 exs = exs[::-1]
             for i in range(len(exs)):
                 j = i + 1
-                print >> out, '%s\t%d\t%d\t%s/ex%02d\t%s' % (ch, exs[i][0], exs[i][1], g, j, st)
+                print >> out, '%s\t%d\t%d\t%s/%02d\t%s' % (ch, exs[i][0], exs[i][1], g, j, st)
 
     for tx in sorted(set(transcripts.keys()) - set(found.keys())):
         print >> sys.stderr, 'transcipt not found: %s\t(%s)' % (tx, transcripts[tx])
@@ -85,41 +87,113 @@ def revComp(seq):
         r.append(c)
     return ''.join(r[::-1])
 
-def indexBedFiles(fnAndMust, sf):
+def indexBedFiles(bedFn, sf):
     global verbose
 
-    for (fn,mustHave) in fnAndMust:
-        idx = {}
-        with openFile(fn) as f:
-            for l in f:
-                t = l.split()
-                ch = t[0]
-                s = int(t[1])
-                e = int(t[2])
-                gex = t[3]
-                st = t[4]
-                if ch not in idx:
-                    idx[ch] = []
-                idx[ch].append((s, e, st, gex))
-        for ch in sorted(idx.keys()):
-            if verbose:
-                print >> sys.stderr, 'processing %s' % (ch, )
+    idx = {}
+    with openFile(bedFn) as f:
+        for l in f:
+            t = l.split()
+            ch = t[0]
+            s = int(t[1])
+            e = int(t[2])
+            gex = t[3]
+            st = t[4]
+            if ch not in idx:
+                idx[ch] = []
+            g, ex = gex.split('/')
+            idx[ch].append((s, e, st, g, ex))
+    for ch in sorted(idx.keys()):
+        if verbose:
+            print >> sys.stderr, 'processing %s' % (ch, )
 
-            seq = sf[ch]
-            idx[ch].sort()
-            for (s, e, st, gex) in idx[ch]:
-                exSeq = seq[s:e].upper()
-                if st == '-':
-                    exSeq = revComp(exSeq)
-                itm = {}
-                itm['exon'] = gex
-                itm['reqd'] = mustHave
-                itm['chr'] = ch
-                itm['st'] = s
-                itm['en'] = e
-                itm['strand'] = st
-                itm['seq'] = exSeq
-                yield itm
+        seq = sf[ch]
+        idx[ch].sort()
+        for (s, e, st, g, ex) in idx[ch]:
+            exSeq = seq[s:e].upper()
+            if st == '-':
+                exSeq = revComp(exSeq)
+            itm = {}
+            itm['gene'] = g
+            itm['exon'] = ex
+            itm['chr'] = ch
+            itm['st'] = s
+            itm['en'] = e
+            itm['strand'] = st
+            itm['seq'] = exSeq
+            yield itm
+
+def recHits(idx, xps, ref):
+    xs = []
+    for (x,p) in xps:
+        if x not in idx:
+            continue
+        xs.append(x)
+    
+    if len(xs) == 0:
+        return []
+
+    S = set([])
+    sdx = {}
+    for x in xs:
+        s = idx[x]
+        if s not in sdx:
+            sdx[s] = 0
+        sdx[s] += 1
+        S.add(s)
+    S = sorted(S)
+
+    xSet = set(sdx.values())
+
+    while True:
+
+        u = unionfind()
+        for i in range(len(S)):
+            s0 = set(S[i])
+            for j in range(i+1, len(S)):
+                s1 = set(S[j])
+                if len(s0 & s1) > 0:
+                    u.union(i, j)
+        grps = {}
+        cnts = {}
+        for i in range(len(S)):
+            j = u.find(i)
+            if j not in grps:
+                grps[j] = set(S[i])
+                cnts[j] = sdx[S[i]]
+            else:
+                grps[j] &= set(S[i])
+                cnts[j] += sdx[S[i]]
+
+        res = {}
+        for j in grps.keys():
+            if len(grps[j]) == 0:
+                continue
+            res[tuple(sorted(grps[j]))] = cnts[j]
+
+        def gex(s) :
+            r = []
+            for n in s:
+                itm = ref[n]
+                r.append('%s/%s' % (itm['gene'], itm['exon']))
+            return '|'.join(r)
+
+        if len(res) > 0:
+            return dict([(gex(s), c) for (s,c) in res.items()])
+            #return res
+
+        xMin = min(xSet)
+        xSet.remove(xMin)
+
+        if len(xSet) == 0:
+            return res
+
+        xMin = min(xSet)
+        S = [s for s in S if sdx[s] >= xMin]
+        first = False
+
+    return res
+
 
 def main(argv):
     global verbose
@@ -138,11 +212,8 @@ def main(argv):
         return
 
     if opts['-X']:
-        inputs = [(opts['<must-have>'],True)]
-        if opts['<may-have>']:
-            inputs.append((opts['<may-have>'],False))
         with openFile(opts['<index>'], 'w') as out:
-            yaml.safe_dump_all(indexBedFiles(inputs, sf), out)
+            yaml.safe_dump_all(indexBedFiles(opts['<must-have>'], sf), out, default_flow_style=False)
         return
 
     K = int(opts['-k'])
@@ -150,25 +221,89 @@ def main(argv):
     with openFile(opts['<index>']) as f:
         ref = list(yaml.load_all(f, Loader=yaml.BaseLoader))
 
-    idx = {}
-    for i in range(len(ref)):
-        itm = ref[i]
-        for (x,p) in kmersWithPosList(K, itm['seq'], False):
-            p -= 1
-            if x not in idx:
-                idx[x] = []
-            idx[x].append((i,p))
-    gex = {}
-    for px in idx.itervalues():
-        l = len(px)
-        if l <= 10:
-            continue
-        for (i,p) in px:
-            v = ref[i]['exon']
-            if v not in gex:
-                gex[v] = 0
-            gex[v] += 1
-    print sorted(gex.items())
+    if False:
+        # Position index
+        idx = {}
+        for i in range(len(ref)):
+            itm = ref[i]
+            for (x,p) in kmersWithPosList(K, itm['seq'], False):
+                p -= 1
+                if x not in idx:
+                    idx[x] = []
+                idx[x].append((i,p))
+
+    if True:
+        # Exon tuple index
+        idx = {}
+        for i in range(len(ref)):
+            itm = ref[i]
+            for (x,p) in kmersWithPosList(K, itm['seq'], False):
+                p -= 1
+                if x not in idx:
+                    idx[x] = set([])
+                idx[x].add(i)
+        for x in idx.iterkeys():
+            idx[x] = tuple(sorted(idx[x]))
+
+    if False:
+        for x in sorted(idx.keys()):
+            if len(idx[x]) > 1:
+                xx = set([])
+                for (i,p) in idx[x]:
+                    itm = ref[i]
+                    k = '%s/%s' % (itm['gene'], itm['exon'])
+                    xx.add(k)
+                xx = sorted(xx)
+                print >> sys.stderr, 'ambiguous k-mer: %s\t%d\t%s' % (render(K, x), len(idx[x]), ', '.join(xx))
+    if False:
+        gex = {}
+        for px in idx.itervalues():
+            l = len(px)
+            for (i,p) in px:
+                v = ref[i]['gene'] + '/' + ref[i]['exon']
+                if v not in gex:
+                    gex[v] = {}
+                if l not in gex[v]:
+                    gex[v][l] = 0
+                gex[v][l] += 1
+
+        for v in sorted(gex.keys()):
+            for (l,c) in sorted(gex[v].items()):
+                print '%s\t%d\t%d' % (v, l, c)
+
+    def showHits(h):
+        r = []
+        for (i,c) in sorted(h.items()):
+            itm = ref[i]
+            r.append((itm['gene'], itm['exon'], p, c))
+        return r
+
+    acc = {}
+    rn = 0
+    for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, both=True, verbose=verbose):
+        rn += 1
+        (lhsFwd, lhsRev) = kmersWithPosLists(K, itm.reads[0][1])
+        (rhsFwd, rhsRev) = kmersWithPosLists(K, itm.reads[1][1])
+        hits0 = recHits(idx, lhsFwd + rhsRev, ref)
+        hits1 = recHits(idx, lhsRev + rhsFwd, ref)
+        if len(hits0) > 0:
+            k = '--'.join(sorted(hits0.keys()))
+            v = sum(hits0.values())
+            if k not in acc:
+                acc[k] = [0, 0]
+            acc[k][0] += 1
+            acc[k][1] += v
+
+        if len(hits1) > 0:
+            k = '--'.join(sorted(hits1.keys()))
+            v = sum(hits1.values())
+            if k not in acc:
+                acc[k] = [0, 0]
+            acc[k][0] += 1
+            acc[k][1] += v
+
+    for k in acc.keys():
+        print '%d\t%d\t%g\t%s' % (acc[k][0], acc[k][1], float(acc[k][1])/float(acc[k][0]), k)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
