@@ -123,7 +123,7 @@ def indexBedFiles(bedFn, sf):
             itm['seq'] = exSeq
             yield itm
 
-def recHits(idx, xps, ref):
+def recHits(idx, xps):
     xs = []
     for (x,p) in xps:
         if x not in idx:
@@ -171,16 +171,8 @@ def recHits(idx, xps, ref):
                 continue
             res[tuple(sorted(grps[j]))] = cnts[j]
 
-        def gex(s) :
-            r = []
-            for n in s:
-                itm = ref[n]
-                r.append('%s/%s' % (itm['gene'], itm['exon']))
-            return '|'.join(r)
-
         if len(res) > 0:
-            return dict([(gex(s), c) for (s,c) in res.items()])
-            #return res
+            return res
 
         xMin = min(xSet)
         xSet.remove(xMin)
@@ -271,23 +263,16 @@ def main(argv):
             for (l,c) in sorted(gex[v].items()):
                 print '%s\t%d\t%d' % (v, l, c)
 
-    def showHits(h):
-        r = []
-        for (i,c) in sorted(h.items()):
-            itm = ref[i]
-            r.append((itm['gene'], itm['exon'], p, c))
-        return r
-
     acc = {}
     rn = 0
     for itm in reads(opts['<input>'], K=K, paired=True, reads=True, kmers=False, both=True, verbose=verbose):
         rn += 1
         (lhsFwd, lhsRev) = kmersWithPosLists(K, itm.reads[0][1])
         (rhsFwd, rhsRev) = kmersWithPosLists(K, itm.reads[1][1])
-        hits0 = recHits(idx, lhsFwd + rhsRev, ref)
-        hits1 = recHits(idx, lhsRev + rhsFwd, ref)
+        hits0 = recHits(idx, lhsFwd + rhsRev)
+        hits1 = recHits(idx, lhsRev + rhsFwd)
         if len(hits0) > 0:
-            k = '--'.join(sorted(hits0.keys()))
+            k = tuple(sorted(hits0.keys()))
             v = sum(hits0.values())
             if k not in acc:
                 acc[k] = [0, 0]
@@ -295,15 +280,33 @@ def main(argv):
             acc[k][1] += v
 
         if len(hits1) > 0:
-            k = '--'.join(sorted(hits1.keys()))
+            k = tuple(sorted(hits1.keys()))
             v = sum(hits1.values())
             if k not in acc:
                 acc[k] = [0, 0]
             acc[k][0] += 1
             acc[k][1] += v
 
+    def gex(s) :
+        r = []
+        for n in s:
+            itm = ref[n]
+            r.append('%s/%s' % (itm['gene'], itm['exon']))
+        return '|'.join(r)
+
+    def fmtKey(k):
+        nex = len(k)
+        gx = set([])
+        kStrParts = []
+        for s in k:
+            kStrParts.append(gex(s))
+            gx |= set([ref[i]['gene'] for i in s])
+        kStr = '--'.join(kStrParts)
+        return (nex, gx, kStr)
+
     for k in acc.keys():
-        print '%d\t%d\t%g\t%s' % (acc[k][0], acc[k][1], float(acc[k][1])/float(acc[k][0]), k)
+        (nex, gx, kStr) = fmtKey(k)
+        print '%d\t%d\t%g\t%d\t%d\t%s' % (acc[k][0], acc[k][1], float(acc[k][1])/float(acc[k][0]), nex, len(gx), kStr)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
