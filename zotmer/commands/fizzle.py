@@ -301,12 +301,29 @@ def main(argv):
         for s in k:
             kStrParts.append(gex(s))
             gx |= set([ref[i]['gene'] for i in s])
-        kStr = '--'.join(kStrParts)
+        kStr = '--'.join(sorted(kStrParts))
         return (nex, gx, kStr)
 
+    gxCounts = {}
+    for k in acc.keys():
+        gx = set([])
+        for s in k:
+            gx |= set([ref[i]['gene'] for i in s])
+        gx = tuple(sorted(gx))
+        if gx not in gxCounts:
+            gxCounts[gx] = [0, 0]
+        gxCounts[gx][0] += acc[k][0]
+        gxCounts[gx][1] += acc[k][1]
+
+    hdr = ['numReads', 'numKmers', 'kmersPerRead']
+    hdr += ['ggNumReads', 'ggNumKmers', 'ggKmersPerRead']
+    hdr += ['numExons', 'numGenes', 'geneGroup', 'exonGroup']
+    print '\t'.join(hdr)
     for k in acc.keys():
         (nex, gx, kStr) = fmtKey(k)
-        print '%d\t%d\t%g\t%d\t%d\t%s' % (acc[k][0], acc[k][1], float(acc[k][1])/float(acc[k][0]), nex, len(gx), kStr)
+        gx = tuple(sorted(gx))
+        gxStr = ':'.join(gx)
+        print '%d\t%d\t%g\t%d\t%d\t%g\t%d\t%d\t%s\t%s' % (acc[k][0], acc[k][1], float(acc[k][1])/float(acc[k][0]), gxCounts[gx][0], gxCounts[gx][1], float(gxCounts[gx][1])/float(gxCounts[gx][0]), nex, len(gx), gxStr, kStr)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
